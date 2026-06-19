@@ -15,9 +15,10 @@ struct PullRequestRow: View {
             openURL(pr.htmlURL)
         } label: {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: statusIcon)
+                OcticonShape(data: pr.prState.octiconPath)
                     .foregroundStyle(statusColor)
-                    .padding(.top, 1)
+                    .frame(width: 14, height: 14)
+                    .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(pr.title)
                         .font(theme.ui(.subheadline))
@@ -43,12 +44,6 @@ struct PullRequestRow: View {
             return "\(repo) · \(meta)"
         }
         return meta
-    }
-
-    /// Open draft PRs get the draft glyph; otherwise the icon reflects the state.
-    private var statusIcon: String {
-        if pr.prState == .open && pr.isDraft { return "pencil.circle" }
-        return pr.prState.systemImage
     }
 
     private var statusColor: Color {

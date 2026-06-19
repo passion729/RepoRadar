@@ -34,11 +34,17 @@ struct MenuBarContentView: View {
             Image(systemName: "dot.radiowaves.left.and.right")
             Text("RepoRadar").font(theme.ui(.headline))
             Spacer()
-            RefreshButton(isRefreshing: state.isRefreshing) {
-                Task { await state.refresh() }
+            if state.isRefreshing {
+                ProgressView().controlSize(.small)
+            } else {
+                Button {
+                    Task { await state.refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help(loc(.refresh))
             }
-            .buttonStyle(.borderless)
-            .help(loc(.refresh))
         }
         .padding(10)
     }

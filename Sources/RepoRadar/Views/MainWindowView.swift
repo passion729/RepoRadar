@@ -4,6 +4,7 @@ struct MainWindowView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var loc: Localizer
     @Environment(\.fontTheme) private var theme
+    @Environment(\.openURL) private var openURL
     @State private var selection: SidebarItem? = .myPRs
     @State private var showingAdd = false
 
@@ -25,16 +26,15 @@ struct MainWindowView: View {
                 .environmentObject(state)
         }
         .toolbar {
-            ToolbarItemGroup {
-                Button { showingAdd = true } label: {
-                    Image(systemName: "plus")
+            ToolbarItem {
+                if state.isRefreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button { Task { await state.refresh() } } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .help(loc(.refresh))
                 }
-                .help(loc(.addRepoHelp))
-
-                RefreshButton(isRefreshing: state.isRefreshing) {
-                    Task { await state.refresh() }
-                }
-                .help(loc(.refresh))
             }
         }
     }
@@ -71,7 +71,7 @@ struct MainWindowView: View {
                 .tag(SidebarItem.notifications)
             }
 
-            Section(loc(.sectionRepositories)) {
+            Section {
                 if state.repositories.isEmpty {
                     Text(loc(.noReposSidebar))
                         .font(theme.ui(.caption))
@@ -90,11 +90,26 @@ struct MainWindowView: View {
                     }
                     .tag(SidebarItem.repo(repo))
                     .contextMenu {
+                        Button(loc(.openRepoInBrowser)) {
+                            openURL(repo.webURL)
+                        }
+                        Divider()
                         Button(loc(.remove), role: .destructive) {
                             state.removeRepository(repo)
                             if selection == .repo(repo) { selection = .myPRs }
                         }
                     }
+                }
+            } header: {
+                HStack {
+                    Text(loc(.sectionRepositories))
+                    Spacer()
+                    Button { showingAdd = true } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help(loc(.addRepoHelp))
                 }
             }
         }

@@ -16,7 +16,11 @@ final class AppState: ObservableObject {
     @Published var repositories: [Repository] = []
     @Published var pullRequestsByRepo: [String: [PullRequest]] = [:]
     @Published var myPullRequests: [RelatedPullRequest] = []
+    @Published var isLoadingMyPRs = false
     @Published var notifications: [GitHubNotification] = []
+
+    /// Closed/merged PRs are limited to the last `recentDays`; open PRs are unbounded.
+    static let recentDays = 30
     @Published var token: String = ""
     @Published var lastError: String?
     @Published var isRefreshing = false
@@ -112,12 +116,14 @@ final class AppState: ObservableObject {
         notifications.filter(\.unread).count
     }
 
-    /// PRs related to me, grouped by status (Open → Merged → Closed),
-    /// each sorted newest-first.
-    var myPullRequestsByStatus: [(state: PRState, prs: [RelatedPullRequest])] {
-        Dictionary(grouping: myPullRequests) { $0.pr.prState }
-            .map { (state: $0.key, prs: $0.value.sorted { $0.pr.updatedAt > $1.pr.updatedAt }) }
-            .sorted { $0.state.sortIndex < $1.state.sortIndex }
+    /// Related PRs of a given status, newest-first (the loaded subset).
+    func myPullRequests(in state: PRState) -> [RelatedPullRequest] {
+        myPullRequests
+            .filter { $0.pr.prState == state }
+            .sorted { $0.pr.updatedAt > $1.pr.updatedAt }
+    }
+    func myPRsCount(in state: PRState) -> Int {
+        myPullRequests.reduce(0) { $0 + ($1.pr.prState == state ? 1 : 0) }
     }
 
     /// All notifications grouped by repository, each sorted newest-first.
@@ -285,17 +291,39 @@ final class AppState: ObservableObject {
         }
 
         // PRs related to me (authored / assigned / review / mentioned).
-        do {
-            myPullRequests = try await GitHubClient.shared.relatedOpenPullRequests()
-        } catch {
-            lastError = describe(error)
-        }
+        await loadRelatedPRs()
 
         // Notifications run on their own faster loop, but refresh them here too
         // so a manual refresh updates everything at once.
         await pollNotifications()
 
         lastRefreshed = Date()
+    }
+
+    // MARK: - Related PRs (all open + last-month closed/merged)
+
+    /// Loads related PRs: all open, plus closed/merged from the last month.
+    func loadRelatedPRs() async {
+        guard !token.isEmpty else { return }
+        isLoadingMyPRs = true
+        defer { isLoadingMyPRs = false }
+        do {
+            myPullRequests = try await GitHubClient.shared.relatedPullRequests(
+                closedSince: Self.dateString(daysAgo: Self.recentDays)
+            )
+        } catch {
+            lastError = describe(error)
+        }
+    }
+
+    static func dateString(daysAgo: Int) -> String {
+        let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     // MARK: - Notifications polling

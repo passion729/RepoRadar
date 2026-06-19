@@ -12,6 +12,8 @@ struct PullRequest: Identifiable, Codable, Hashable {
     let createdAt: Date
     let updatedAt: Date
     let draft: Bool?
+    /// Top-level merge timestamp from the repo pulls API (nil if unmerged).
+    let mergedAt: Date?
     /// Present on search-API results; carries merge info to distinguish
     /// merged from plain-closed PRs.
     let pullRequest: PullRequestMeta?
@@ -39,7 +41,8 @@ struct PullRequest: Identifiable, Codable, Hashable {
     /// with a non-nil `merged_at`, so we check that to separate it from a plain close.
     var prState: PRState {
         if state == "open" { return .open }
-        return pullRequest?.mergedAt != nil ? .merged : .closed
+        let isMerged = mergedAt != nil || pullRequest?.mergedAt != nil
+        return isMerged ? .merged : .closed
     }
 
     /// "owner/name" parsed from the html_url (…/owner/name/pull/123).
@@ -56,6 +59,7 @@ struct PullRequest: Identifiable, Codable, Hashable {
         case htmlURL = "html_url"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case mergedAt = "merged_at"
         case pullRequest = "pull_request"
     }
 }
@@ -80,11 +84,12 @@ enum PRState: String {
         }
     }
 
-    var systemImage: String {
+    /// GitHub octicon path for this state (rendered via OcticonShape).
+    var octiconPath: String {
         switch self {
-        case .open: return "arrow.triangle.pull"
-        case .merged: return "arrow.triangle.merge"
-        case .closed: return "xmark.circle"
+        case .open: return OcticonPath.gitPullRequest
+        case .merged: return OcticonPath.gitMerge
+        case .closed: return OcticonPath.gitPullRequestClosed
         }
     }
 }

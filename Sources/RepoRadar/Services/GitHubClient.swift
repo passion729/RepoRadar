@@ -128,15 +128,70 @@ actor GitHubClient {
         return try await conditionalSend(request, cacheKey: key, as: [PullRequest].self)
     }
 
-    /// Every PR related to the authenticated user across all repos (any state) —
-    /// authored, assigned, review-requested, or mentioned. Runs one search per
-    /// relationship in parallel, then merges by PR id (a PR can match several).
-    func relatedOpenPullRequests() async throws -> [RelatedPullRequest] {
+    private static let pageCap = 10        // safety bound on internal paging
+    private static let perPage = 100
+
+    /// A repo's PRs for the detail view: ALL open PRs, plus closed/merged ones
+    /// updated within the last `recentDays`. No UI pagination.
+    func repoPullRequests(_ repo: Repository, recentSince: Date) async throws -> [PullRequest] {
+        async let open = openRepoPRs(repo)
+        async let closed = recentClosedRepoPRs(repo, since: recentSince)
+        return try await open + closed
+    }
+
+    private func openRepoPRs(_ repo: Repository) async throws -> [PullRequest] {
+        var all: [PullRequest] = []
+        var page = 1
+        while page <= Self.pageCap {
+            let items = try await send(pullsRequest(repo, state: "open", page: page), as: [PullRequest].self)
+            all += items
+            if items.count < Self.perPage { break }
+            page += 1
+        }
+        return all
+    }
+
+    private func recentClosedRepoPRs(_ repo: Repository, since: Date) async throws -> [PullRequest] {
+        var all: [PullRequest] = []
+        var page = 1
+        while page <= Self.pageCap {
+            let items = try await send(pullsRequest(repo, state: "closed", page: page), as: [PullRequest].self)
+            for pr in items {
+                if pr.updatedAt >= since { all.append(pr) } else { return all } // sorted desc → stop
+            }
+            if items.count < Self.perPage { break }
+            page += 1
+        }
+        return all
+    }
+
+    private func pullsRequest(_ repo: Repository, state: String, page: Int) throws -> URLRequest {
+        try makeRequest(
+            path: "/repos/\(repo.owner)/\(repo.name)/pulls",
+            query: [
+                URLQueryItem(name: "state", value: state),
+                URLQueryItem(name: "sort", value: "updated"),
+                URLQueryItem(name: "direction", value: "desc"),
+                URLQueryItem(name: "per_page", value: String(Self.perPage)),
+                URLQueryItem(name: "page", value: String(page))
+            ]
+        )
+    }
+
+    /// PRs related to the authenticated user (authored/assigned/review/mentioned):
+    /// ALL open PRs, plus closed/merged updated since `closedSince` (YYYY-MM-DD).
+    /// Merged by PR id (a PR can match several relationships).
+    func relatedPullRequests(closedSince: String) async throws -> [RelatedPullRequest] {
         var merged: [Int: RelatedPullRequest] = [:]
         try await withThrowingTaskGroup(of: (PRRelation, [PullRequest]).self) { group in
             for relation in PRRelation.allCases {
                 group.addTask {
-                    (relation, try await self.searchPRs(qualifier: relation.searchQualifier))
+                    async let open = self.searchAll(qualifier: relation.searchQualifier, state: "is:open")
+                    async let closed = self.searchAll(
+                        qualifier: relation.searchQualifier,
+                        state: "is:closed updated:>=\(closedSince)"
+                    )
+                    return (relation, try await open + closed)
                 }
             }
             for try await (relation, prs) in group {
@@ -149,16 +204,27 @@ actor GitHubClient {
         return Array(merged.values)
     }
 
-    private func searchPRs(qualifier: String) async throws -> [PullRequest] {
-        let request = try makeRequest(
-            path: "/search/issues",
-            query: [
-                URLQueryItem(name: "q", value: "is:pr \(qualifier)"),
-                URLQueryItem(name: "sort", value: "updated"),
-                URLQueryItem(name: "per_page", value: "100")
-            ]
-        )
-        return try await send(request, as: SearchResult<PullRequest>.self).items
+    /// All pages (capped) of a PR search for one relationship + state filter.
+    private func searchAll(qualifier: String, state: String) async throws -> [PullRequest] {
+        var all: [PullRequest] = []
+        var page = 1
+        while page <= Self.pageCap {
+            let request = try makeRequest(
+                path: "/search/issues",
+                query: [
+                    URLQueryItem(name: "q", value: "is:pr \(qualifier) \(state)"),
+                    URLQueryItem(name: "sort", value: "updated"),
+                    URLQueryItem(name: "order", value: "desc"),
+                    URLQueryItem(name: "per_page", value: String(Self.perPage)),
+                    URLQueryItem(name: "page", value: String(page))
+                ]
+            )
+            let items = try await send(request, as: SearchResult<PullRequest>.self).items
+            all += items
+            if items.count < Self.perPage { break }
+            page += 1
+        }
+        return all
     }
 
     /// Notifications via a conditional request. Returns `nil` when unchanged
