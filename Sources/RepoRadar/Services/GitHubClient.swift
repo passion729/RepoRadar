@@ -228,6 +228,12 @@ actor GitHubClient {
         return all
     }
 
+    /// Login (username) of the authenticated user, for building github.com links.
+    func currentUserLogin() async throws -> String {
+        let request = try makeRequest(path: "/user")
+        return try await send(request, as: UserInfo.self).login
+    }
+
     /// Confirms a repo exists and is reachable with the current token.
     func verify(repo: Repository) async throws {
         let request = try makeRequest(path: "/repos/\(repo.owner)/\(repo.name)")
@@ -236,6 +242,10 @@ actor GitHubClient {
 
     private struct RepoCheck: Decodable {
         let full_name: String
+    }
+
+    private struct UserInfo: Decodable {
+        let login: String
     }
 
     /// Wrapper for the GitHub search API, which nests results under `items`.

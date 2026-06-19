@@ -26,10 +26,27 @@ struct MainWindowView: View {
                 .environmentObject(state)
         }
         .toolbar {
+            ToolbarItemGroup {
+                Button { openURL(state.myGitHubURL) } label: {
+                    Image(systemName: "person.crop.circle")
+                }
+                .help(loc(.openMyGitHub))
+                Button { openURL(state.allPullsURL) } label: {
+                    Image(nsImage: OcticonPath.templateImage(OcticonPath.gitPullRequest, size: 16))
+                }
+                .help(loc(.openAllPRs))
+                Button { openURL(state.myReposURL) } label: {
+                    Image(systemName: "folder")
+                }
+                .help(loc(.openAllRepos))
+                Button { openURL(state.githubNotificationsURL) } label: {
+                    Image(systemName: "bell")
+                }
+                .help(loc(.openGitHubNotifications))
+            }
+
+            // Refresh sits in its own item so it's spaced apart from the links.
             ToolbarItem {
-                // Native toolbar button so it matches the system sidebar-toggle
-                // button's sizing. Swap only the label (icon ↔ spinner) so the
-                // button itself never resizes.
                 Button { Task { await state.refresh() } } label: {
                     if state.isRefreshing {
                         ProgressView().controlSize(.small)
@@ -120,8 +137,8 @@ struct MainWindowView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if let stamp = state.lastRefreshed {
-                Text(loc(.lastRefreshed(stamp.formatted(date: .omitted, time: .shortened))))
-                    .font(theme.ui(.caption2))
+                Text(loc(.lastRefreshed(refreshedText(stamp))))
+                    .font(.caption2)   // system font, independent of the custom font setting
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
@@ -151,6 +168,15 @@ struct MainWindowView: View {
                 PullRequestListView(repo: repo)
             }
         }
+    }
+
+    /// Within an hour → relative ("5 minutes ago"); otherwise an absolute
+    /// date + time ("Jun 19, 4:30 PM").
+    private func refreshedText(_ date: Date) -> String {
+        let elapsed = Date().timeIntervalSince(date)
+        if elapsed < 60 { return loc(.justNow) }
+        if elapsed < 3600 { return date.formatted(.relative(presentation: .named)) }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func badge(_ count: Int) -> some View {

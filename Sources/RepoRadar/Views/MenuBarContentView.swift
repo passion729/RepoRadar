@@ -6,6 +6,7 @@ struct MenuBarContentView: View {
     @EnvironmentObject var loc: Localizer
     @Environment(\.fontTheme) private var theme
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openURL) private var openURL
 
     /// Measured height of the scrollable content (drives the popover size).
     @State private var scrollContentHeight: CGFloat = 0
@@ -35,6 +36,29 @@ struct MenuBarContentView: View {
                 .frame(width: 15, height: 15)
             Text("RepoRadar").font(theme.ui(.headline))
             Spacer()
+            Button { openURL(state.myGitHubURL) } label: {
+                Image(systemName: "person.crop.circle")
+            }
+            .buttonStyle(.borderless)
+            .help(loc(.openMyGitHub))
+            Button { openURL(state.allPullsURL) } label: {
+                Image(nsImage: OcticonPath.templateImage(OcticonPath.gitPullRequest, size: 15))
+            }
+            .buttonStyle(.borderless)
+            .help(loc(.openAllPRs))
+            Button { openURL(state.myReposURL) } label: {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.borderless)
+            .help(loc(.openAllRepos))
+            Button { openURL(state.githubNotificationsURL) } label: {
+                Image(systemName: "bell")
+            }
+            .buttonStyle(.borderless)
+            .help(loc(.openGitHubNotifications))
+
+            Divider().frame(height: 14)
+
             Button {
                 Task { await state.refresh() }
             } label: {

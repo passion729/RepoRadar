@@ -18,6 +18,7 @@
 "detail.needLogin" = "需要先登录";
 "detail.openSettings" = "打开设置";
 "sidebar.lastRefreshed" = "上次刷新 %@";
+"sidebar.justNow" = "刚刚";
 
 /* Related PRs view */
 "relatedPRs.title" = "与我相关的 PR(%ld)";
@@ -90,6 +91,10 @@
 "menu.noOpenPRs" = "没有打开的 PR";
 "menu.openMainWindow" = "打开主窗口";
 "menu.quit" = "退出";
+"links.myGitHub" = "我的 GitHub";
+"links.allPRs" = "所有 PR";
+"links.allRepos" = "所有仓库";
+"links.notifications" = "GitHub 通知";
 
 /* AppState errors / notification reasons */
 "error.cannotParseRepo" = "无法解析「%@」,请使用 owner/name 格式或粘贴仓库链接。";

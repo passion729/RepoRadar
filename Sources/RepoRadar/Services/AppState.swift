@@ -18,6 +18,17 @@ final class AppState: ObservableObject {
     @Published var myPullRequests: [RelatedPullRequest] = []
     @Published var isLoadingMyPRs = false
     @Published var notifications: [GitHubNotification] = []
+    /// Authenticated user's login, for building github.com quick links.
+    @Published var userLogin: String?
+
+    var myGitHubURL: URL {
+        URL(string: userLogin.map { "https://github.com/\($0)" } ?? "https://github.com")!
+    }
+    var allPullsURL: URL { URL(string: "https://github.com/pulls")! }
+    var githubNotificationsURL: URL { URL(string: "https://github.com/notifications")! }
+    var myReposURL: URL {
+        URL(string: userLogin.map { "https://github.com/\($0)?tab=repositories" } ?? "https://github.com")!
+    }
 
     /// Per-repo detail PRs (all open + last-month closed), keyed by "owner/name".
     /// Keying by repo means a late-finishing fetch can never land under the
@@ -226,6 +237,7 @@ final class AppState: ObservableObject {
         saveToken("")
         pullRequestsByRepo = [:]
         notifications = []
+        userLogin = nil
     }
 
     // MARK: - Repositories
@@ -284,6 +296,10 @@ final class AppState: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
         lastError = nil
+
+        if userLogin == nil {
+            userLogin = try? await GitHubClient.shared.currentUserLogin()
+        }
 
         // Pull requests for each monitored repo, concurrently. A nil result
         // means unchanged (304) or a transient error — keep the existing data.

@@ -116,6 +116,7 @@ enum LocKey {
     case needLogin
     case openSettings
     case lastRefreshed(String)
+    case justNow
 
     // Related PRs view
     case relatedPRsTitle(Int)
@@ -188,6 +189,10 @@ enum LocKey {
     case noOpenPRs
     case openMainWindow
     case quit
+    case openMyGitHub
+    case openAllPRs
+    case openAllRepos
+    case openGitHubNotifications
 
     // AppState errors / reasons
     case cannotParseRepo(String)
@@ -237,6 +242,7 @@ enum LocKey {
         case .needLogin: return "detail.needLogin"
         case .openSettings: return "detail.openSettings"
         case .lastRefreshed: return "sidebar.lastRefreshed"
+        case .justNow: return "sidebar.justNow"
 
         case .relatedPRsTitle: return "relatedPRs.title"
         case .relatedPRsEmptyTitle: return "relatedPRs.emptyTitle"
@@ -301,6 +307,10 @@ enum LocKey {
         case .noOpenPRs: return "menu.noOpenPRs"
         case .openMainWindow: return "menu.openMainWindow"
         case .quit: return "menu.quit"
+        case .openMyGitHub: return "links.myGitHub"
+        case .openAllPRs: return "links.allPRs"
+        case .openAllRepos: return "links.allRepos"
+        case .openGitHubNotifications: return "links.notifications"
 
         case .cannotParseRepo: return "error.cannotParseRepo"
         case .repoAlreadyAdded: return "error.repoAlreadyAdded"

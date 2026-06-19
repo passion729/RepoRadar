@@ -18,6 +18,7 @@
 "detail.needLogin" = "Sign in first";
 "detail.openSettings" = "Open Settings";
 "sidebar.lastRefreshed" = "Last refreshed %@";
+"sidebar.justNow" = "just now";
 
 /* Related PRs view */
 "relatedPRs.title" = "PRs Involving Me (%ld)";
@@ -90,6 +91,10 @@
 "menu.noOpenPRs" = "No open PRs";
 "menu.openMainWindow" = "Open Main Window";
 "menu.quit" = "Quit";
+"links.myGitHub" = "My GitHub";
+"links.allPRs" = "All PRs";
+"links.allRepos" = "All repos";
+"links.notifications" = "GitHub notifications";
 
 /* AppState errors / notification reasons */
 "error.cannotParseRepo" = "Can't parse “%@”. Use owner/name format or paste a repository link.";
