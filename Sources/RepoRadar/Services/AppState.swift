@@ -57,6 +57,18 @@ final class AppState: ObservableObject {
     static let minRefreshMinutes = 1
     private static let refreshIntervalKey = "reporadar.refreshIntervalMinutes"
 
+    /// When the main window is closed, should the app keep its Dock icon?
+    /// Default is `true` (classic behaviour). When `false`, closing the main
+    /// window turns the app into a menu-bar-only accessory: the Dock icon
+    /// disappears and only the menu bar item remains.
+    @Published var keepDockIcon: Bool {
+        didSet {
+            UserDefaults.standard.set(keepDockIcon, forKey: Self.keepDockIconKey)
+            DockVisibilityController.shared.setKeepDockIcon(keepDockIcon)
+        }
+    }
+    private static let keepDockIconKey = "reporadar.keepDockIcon"
+
     /// App-wide font settings (persisted). The resolved `fontTheme` is injected
     /// into the SwiftUI environment at every scene root, so the main window and
     /// the menu bar stay in sync.
@@ -167,8 +179,17 @@ final class AppState: ObservableObject {
         menuFontFamily = FontCatalog.isInstalledUIFamily(storedMenuFamily) ? storedMenuFamily : ""
         let storedMenuSize = UserDefaults.standard.integer(forKey: Self.menuFontSizeKey)
         menuFontSize = storedMenuSize >= FontSettings.minSize ? storedMenuSize : FontSettings.defaultMenuSize
+        // Default to keeping the Dock icon when the preference has never been set.
+        if UserDefaults.standard.object(forKey: Self.keepDockIconKey) == nil {
+            keepDockIcon = true
+        } else {
+            keepDockIcon = UserDefaults.standard.bool(forKey: Self.keepDockIconKey)
+        }
         loadRepositories()
         token = KeychainStore.loadToken() ?? ""
+        // Seed the Dock controller with the persisted preference (does not change
+        // the Dock icon yet — that only happens once the window has been tracked).
+        DockVisibilityController.shared.setKeepDockIcon(keepDockIcon)
     }
 
     // MARK: - Lifecycle

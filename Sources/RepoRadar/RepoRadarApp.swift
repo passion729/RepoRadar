@@ -13,6 +13,7 @@ struct RepoRadarApp: App {
                 .environmentObject(loc)
                 .environment(\.fontTheme, state.fontTheme)
                 .frame(minWidth: 760, minHeight: 480)
+                .background(MainWindowDockBridge())
                 .task { state.bootstrap() }
         }
         .windowResizability(.contentMinSize)

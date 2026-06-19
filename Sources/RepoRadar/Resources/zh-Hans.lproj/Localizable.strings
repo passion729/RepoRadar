@@ -78,6 +78,9 @@
 "settings.menuFontSection" = "菜单栏";
 "settings.menuFontFamily" = "菜单栏字体";
 "settings.menuFontSize" = "菜单栏字号(磅):%ld";
+"settings.dockSection" = "Dock 程序坞";
+"settings.keepDockIcon" = "关闭窗口后保留 Dock 图标";
+"settings.keepDockIconHint" = "关闭此项后,关闭主窗口会隐藏 Dock 图标,只保留菜单栏图标。可从菜单栏重新打开窗口。";
 
 /* Menu bar */
 "menu.notLoggedIn" = "尚未登录";

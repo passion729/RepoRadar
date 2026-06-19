@@ -78,6 +78,9 @@
 "settings.menuFontSection" = "Menu Bar";
 "settings.menuFontFamily" = "Menu bar font";
 "settings.menuFontSize" = "Menu bar font size (pt): %ld";
+"settings.dockSection" = "Dock";
+"settings.keepDockIcon" = "Keep Dock icon when window is closed";
+"settings.keepDockIconHint" = "When off, closing the main window hides the Dock icon and leaves only the menu bar item. Reopen from the menu bar.";
 
 /* Menu bar */
 "menu.notLoggedIn" = "Not signed in";

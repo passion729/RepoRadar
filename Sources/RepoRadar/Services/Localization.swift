@@ -176,6 +176,9 @@ enum LocKey {
     case menuFontSectionTitle
     case menuFontFamilyLabel
     case menuFontSizeLabel(Int)
+    case dockSectionTitle
+    case keepDockIconLabel
+    case keepDockIconHint
 
     // Menu bar
     case menuNotLoggedIn
@@ -295,6 +298,9 @@ enum LocKey {
         case .menuFontSectionTitle: return "settings.menuFontSection"
         case .menuFontFamilyLabel: return "settings.menuFontFamily"
         case .menuFontSizeLabel: return "settings.menuFontSize"
+        case .dockSectionTitle: return "settings.dockSection"
+        case .keepDockIconLabel: return "settings.keepDockIcon"
+        case .keepDockIconHint: return "settings.keepDockIconHint"
 
         case .menuNotLoggedIn: return "menu.notLoggedIn"
         case .menuLoginHint: return "menu.loginHint"

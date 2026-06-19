@@ -69,6 +69,13 @@ struct SettingsView: View {
                 }
             }
 
+            Section(loc(.dockSectionTitle)) {
+                Toggle(loc(.keepDockIconLabel), isOn: $state.keepDockIcon)
+                Text(loc(.keepDockIconHint))
+                    .font(theme.ui(.caption))
+                    .foregroundStyle(.secondary)
+            }
+
             Section(loc(.loginSectionTitle)) {
                 if isLoggedIn {
                     HStack {
