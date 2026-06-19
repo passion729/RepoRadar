@@ -1,0 +1,117 @@
+/* Common actions */
+"action.refresh" = "Refresh";
+"action.settings" = "Settings";
+"action.cancel" = "Cancel";
+"action.save" = "Save";
+"action.saved" = "Saved";
+"action.add" = "Add";
+"action.remove" = "Remove";
+
+/* Main window — toolbar & sidebar */
+"toolbar.addRepo" = "Add repository";
+"toolbar.openRepoInBrowser" = "Open repository in browser";
+"sidebar.overview" = "Overview";
+"sidebar.repositories" = "Repositories";
+"sidebar.notifications" = "Notifications";
+"sidebar.relatedPRs" = "PRs Involving Me";
+"sidebar.noRepos" = "No repositories yet";
+"detail.needLogin" = "Sign in first";
+"detail.openSettings" = "Open Settings";
+"sidebar.lastRefreshed" = "Last refreshed %@";
+
+/* Related PRs view */
+"relatedPRs.title" = "PRs Involving Me (%ld)";
+"relatedPRs.emptyTitle" = "No pull requests involve you";
+"relatedPRs.emptyDesc" = "PRs you authored, are assigned, are requested to review, or are mentioned in show up here";
+
+/* Notifications view */
+"notifications.title" = "Notifications (%ld unread)";
+"notifications.emptyTitle" = "No notifications";
+"notifications.emptyDesc" = "All notifications for your account are summarized here";
+"notifications.unreadCount" = "%ld unread";
+
+/* Per-repo PR list */
+"prList.emptyTitle" = "No open pull requests";
+
+/* PR status groups */
+"prStatus.open" = "Open";
+"prStatus.merged" = "Merged";
+"prStatus.closed" = "Closed";
+
+/* PR relationship badges */
+"relation.authored" = "Created";
+"relation.assigned" = "Assigned";
+"relation.reviewRequested" = "Review";
+"relation.mentioned" = "Mentioned";
+
+/* Add repository sheet */
+"addRepo.title" = "Add Repository";
+"addRepo.subtitle" = "Enter owner/name, or paste a GitHub repository link.";
+"addRepo.placeholder" = "e.g. apple/swift";
+
+/* Settings */
+"settings.loginSection" = "Sign in with GitHub (recommended)";
+"settings.loggedIn" = "Signed in";
+"settings.signOut" = "Sign out";
+"settings.signIn" = "Sign in with GitHub";
+"settings.deviceFlowHint" = "A device code will appear; enter it in the browser to authorize. The token is stored in the macOS Keychain.";
+"settings.enterDeviceCode" = "Enter this device code on the GitHub page that opened:";
+"settings.copyAndOpen" = "Copy & Open GitHub";
+"settings.waitingForAuth" = "Waiting for authorization…";
+"settings.patSection" = "Or: paste a Personal Access Token";
+"settings.patHint" = "Needs repo and notifications scopes. Stored in the macOS Keychain, never written to disk in plain text.";
+"settings.createToken" = "Create Token";
+"settings.refreshHint" = "The app refreshes automatically at the interval above; you can also refresh manually with ⌘R or the refresh button.";
+"settings.refreshInterval" = "Auto-refresh interval (min): %ld";
+"settings.languageSection" = "Language";
+"settings.interfaceLanguage" = "Interface language";
+"settings.fontSection" = "Fonts";
+"settings.uiFontFamily" = "UI font";
+"settings.monoFontFamily" = "Mono font";
+"settings.systemFont" = "System";
+"settings.systemMonoFont" = "System Mono";
+"settings.uiFontSize" = "UI font size (pt): %ld";
+"settings.monoFontSize" = "Mono font size (pt): %ld";
+"settings.menuFontSection" = "Menu Bar";
+"settings.menuFontFamily" = "Menu bar font";
+"settings.menuFontSize" = "Menu bar font size (pt): %ld";
+
+/* Menu bar */
+"menu.notLoggedIn" = "Not signed in";
+"menu.loginHint" = "Sign in to GitHub from Settings to get started.";
+"menu.pill.relatedPRs" = "My PRs";
+"menu.pill.repoPRs" = "Repo PRs";
+"menu.pill.unread" = "Unread";
+"menu.section.relatedPRs" = "PRs Involving Me";
+"menu.section.recentNotifications" = "Recent Notifications";
+"menu.noReposHint" = "No repositories yet — open the main window and tap + to add one.";
+"menu.noOpenPRs" = "No open PRs";
+"menu.openMainWindow" = "Open Main Window";
+"menu.quit" = "Quit";
+
+/* AppState errors / notification reasons */
+"error.cannotParseRepo" = "Can't parse “%@”. Use owner/name format or paste a repository link.";
+"error.repoAlreadyAdded" = "Repository already in the list: %@";
+"error.noTokenShort" = "No GitHub token set.";
+"reason.reviewRequested" = "Review requested";
+"reason.mention" = "Mentioned you";
+"reason.assign" = "Assigned to you";
+"reason.author" = "You authored";
+"reason.comment" = "New comment";
+"reason.stateChange" = "State changed";
+
+/* GitHub client errors */
+"error.gh.notAuthenticated" = "No GitHub token set — add one in Settings.";
+"error.gh.http" = "GitHub API error (%ld): %@";
+"error.gh.decoding" = "Failed to parse response: %@";
+
+/* OAuth errors */
+"error.oauth.cancelled" = "GitHub sign-in cancelled.";
+"error.oauth.expired" = "Device code expired, please sign in again.";
+"error.oauth.http" = "GitHub authorization service returned an error (HTTP %ld).";
+"error.oauth.server" = "GitHub authorization failed: %@";
+
+/* Internal fallbacks */
+"fallback.unknownResponse" = "Unknown response";
+"fallback.noHTTPResponse" = "No HTTP response";
+"fallback.otherGroup" = "Other";

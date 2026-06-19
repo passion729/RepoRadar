@@ -1,0 +1,117 @@
+/* Common actions */
+"action.refresh" = "刷新";
+"action.settings" = "设置";
+"action.cancel" = "取消";
+"action.save" = "保存";
+"action.saved" = "已保存";
+"action.add" = "添加";
+"action.remove" = "移除";
+
+/* Main window — toolbar & sidebar */
+"toolbar.addRepo" = "添加仓库";
+"toolbar.openRepoInBrowser" = "在浏览器打开仓库";
+"sidebar.overview" = "汇总";
+"sidebar.repositories" = "仓库";
+"sidebar.notifications" = "通知";
+"sidebar.relatedPRs" = "与我相关的 PR";
+"sidebar.noRepos" = "还没有添加仓库";
+"detail.needLogin" = "需要先登录";
+"detail.openSettings" = "打开设置";
+"sidebar.lastRefreshed" = "上次刷新 %@";
+
+/* Related PRs view */
+"relatedPRs.title" = "与我相关的 PR(%ld)";
+"relatedPRs.emptyTitle" = "没有与你相关的 Pull Request";
+"relatedPRs.emptyDesc" = "你创建、被指派、被请求 review 或被提到的 PR 会汇总到这里";
+
+/* Notifications view */
+"notifications.title" = "通知(%ld 未读)";
+"notifications.emptyTitle" = "暂无通知";
+"notifications.emptyDesc" = "你账号下的全部通知会汇总在这里";
+"notifications.unreadCount" = "%ld 未读";
+
+/* Per-repo PR list */
+"prList.emptyTitle" = "没有打开的 Pull Request";
+
+/* PR status groups */
+"prStatus.open" = "开启中";
+"prStatus.merged" = "已合并";
+"prStatus.closed" = "已关闭";
+
+/* PR relationship badges */
+"relation.authored" = "我创建";
+"relation.assigned" = "指派给我";
+"relation.reviewRequested" = "待我 review";
+"relation.mentioned" = "提到我";
+
+/* Add repository sheet */
+"addRepo.title" = "添加仓库";
+"addRepo.subtitle" = "输入 owner/name,或直接粘贴 GitHub 仓库链接。";
+"addRepo.placeholder" = "例如 apple/swift";
+
+/* Settings */
+"settings.loginSection" = "用 GitHub 登录(推荐)";
+"settings.loggedIn" = "已登录";
+"settings.signOut" = "退出登录";
+"settings.signIn" = "用 GitHub 登录";
+"settings.deviceFlowHint" = "会显示一个设备码,在浏览器里输入即可授权。Token 保存在 macOS 钥匙串。";
+"settings.enterDeviceCode" = "在打开的 GitHub 页面输入这个设备码:";
+"settings.copyAndOpen" = "复制并打开 GitHub";
+"settings.waitingForAuth" = "等待授权…";
+"settings.patSection" = "或:粘贴 Personal Access Token";
+"settings.patHint" = "需要 repo 与 notifications 权限。Token 会保存在 macOS 钥匙串中,不会明文写入磁盘。";
+"settings.createToken" = "创建 Token";
+"settings.refreshHint" = "应用按上面设定的间隔自动刷新,你也可以用 ⌘R 或界面上的刷新按钮手动刷新。";
+"settings.refreshInterval" = "自动刷新间隔(分钟):%ld";
+"settings.languageSection" = "语言";
+"settings.interfaceLanguage" = "界面语言";
+"settings.fontSection" = "字体";
+"settings.uiFontFamily" = "界面字体";
+"settings.monoFontFamily" = "等宽字体";
+"settings.systemFont" = "系统";
+"settings.systemMonoFont" = "系统等宽";
+"settings.uiFontSize" = "界面字号(磅):%ld";
+"settings.monoFontSize" = "等宽字号(磅):%ld";
+"settings.menuFontSection" = "菜单栏";
+"settings.menuFontFamily" = "菜单栏字体";
+"settings.menuFontSize" = "菜单栏字号(磅):%ld";
+
+/* Menu bar */
+"menu.notLoggedIn" = "尚未登录";
+"menu.loginHint" = "在「设置」里登录 GitHub 即可开始。";
+"menu.pill.relatedPRs" = "相关 PR";
+"menu.pill.repoPRs" = "仓库 PR";
+"menu.pill.unread" = "未读";
+"menu.section.relatedPRs" = "与我相关的 PR";
+"menu.section.recentNotifications" = "最近通知";
+"menu.noReposHint" = "还没有添加仓库,打开主窗口点 + 添加。";
+"menu.noOpenPRs" = "没有打开的 PR";
+"menu.openMainWindow" = "打开主窗口";
+"menu.quit" = "退出";
+
+/* AppState errors / notification reasons */
+"error.cannotParseRepo" = "无法解析「%@」,请使用 owner/name 格式或粘贴仓库链接。";
+"error.repoAlreadyAdded" = "仓库已在列表中:%@";
+"error.noTokenShort" = "未设置 GitHub Token。";
+"reason.reviewRequested" = "请你 review";
+"reason.mention" = "提到了你";
+"reason.assign" = "指派给你";
+"reason.author" = "你创建的";
+"reason.comment" = "新评论";
+"reason.stateChange" = "状态变化";
+
+/* GitHub client errors */
+"error.gh.notAuthenticated" = "未设置 GitHub Token,请到「设置」里填写。";
+"error.gh.http" = "GitHub API 错误 (%ld):%@";
+"error.gh.decoding" = "解析响应失败:%@";
+
+/* OAuth errors */
+"error.oauth.cancelled" = "已取消 GitHub 登录。";
+"error.oauth.expired" = "设备码已过期,请重新登录。";
+"error.oauth.http" = "GitHub 授权服务返回错误(HTTP %ld)。";
+"error.oauth.server" = "GitHub 授权失败:%@";
+
+/* Internal fallbacks */
+"fallback.unknownResponse" = "未知响应";
+"fallback.noHTTPResponse" = "无 HTTP 响应";
+"fallback.otherGroup" = "其他";

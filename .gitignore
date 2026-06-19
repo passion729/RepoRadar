@@ -1,0 +1,12 @@
+# Swift Package Manager build output
+.build/
+*.xcodeproj
+
+# Packaged app bundle (produced by build.sh)
+*.app
+
+# macOS
+.DS_Store
+
+# Local Claude/editor state
+.claude/
