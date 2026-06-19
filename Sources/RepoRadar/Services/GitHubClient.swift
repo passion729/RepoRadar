@@ -29,6 +29,14 @@ actor GitHubClient {
         return decoder
     }()
 
+    /// Per-endpoint ETag cache for conditional requests (304 ⇒ unchanged,
+    /// and 304 responses don't count against the rate limit).
+    private var etags: [String: String] = [:]
+    /// Server-suggested poll interval (seconds) per endpoint, from `X-Poll-Interval`.
+    private var pollIntervals: [String: Int] = [:]
+
+    private static let notificationsKey = "/notifications"
+
     // MARK: - Requests
 
     private func makeRequest(path: String, query: [URLQueryItem] = []) throws -> URLRequest {
@@ -66,9 +74,50 @@ actor GitHubClient {
         }
     }
 
+    /// Conditional GET: sends `If-None-Match` from the cache and returns `nil`
+    /// on `304 Not Modified` (caller keeps its existing data). Also records any
+    /// `X-Poll-Interval` the server suggests.
+    private func conditionalSend<T: Decodable>(
+        _ request: URLRequest,
+        cacheKey: String,
+        as type: T.Type
+    ) async throws -> T? {
+        var request = request
+        if let etag = etags[cacheKey] {
+            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GitHubError.http(-1, Localizer.t(.noHTTPResponse))
+        }
+        if let poll = http.value(forHTTPHeaderField: "X-Poll-Interval"), let seconds = Int(poll) {
+            pollIntervals[cacheKey] = seconds
+        }
+        if http.statusCode == 304 { return nil }
+        guard (200..<300).contains(http.statusCode) else {
+            throw GitHubError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        if let etag = http.value(forHTTPHeaderField: "ETag") {
+            etags[cacheKey] = etag
+        }
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw GitHubError.decoding(String(describing: error))
+        }
+    }
+
+    /// Seconds to wait before polling notifications again (server-driven, ≥ 60).
+    func notificationsPollSeconds() -> Int {
+        max(60, pollIntervals[Self.notificationsKey] ?? 60)
+    }
+
     // MARK: - Endpoints
 
-    func pullRequests(for repo: Repository, state: String = "open") async throws -> [PullRequest] {
+    /// Open PRs for a repo. Returns `nil` when unchanged since the last fetch
+    /// (HTTP 304), so the caller keeps the data it already has.
+    func pullRequests(for repo: Repository, state: String = "open") async throws -> [PullRequest]? {
+        let key = "pulls:\(repo.owner)/\(repo.name):\(state)"
         let request = try makeRequest(
             path: "/repos/\(repo.owner)/\(repo.name)/pulls",
             query: [
@@ -76,7 +125,7 @@ actor GitHubClient {
                 URLQueryItem(name: "per_page", value: "50")
             ]
         )
-        return try await send(request, as: [PullRequest].self)
+        return try await conditionalSend(request, cacheKey: key, as: [PullRequest].self)
     }
 
     /// Every PR related to the authenticated user across all repos (any state) —
@@ -112,12 +161,14 @@ actor GitHubClient {
         return try await send(request, as: SearchResult<PullRequest>.self).items
     }
 
-    func notifications(all: Bool = false) async throws -> [GitHubNotification] {
+    /// Notifications via a conditional request. Returns `nil` when unchanged
+    /// (HTTP 304); 304s are free (don't count against the rate limit).
+    func notifications(all: Bool = false) async throws -> [GitHubNotification]? {
         let request = try makeRequest(
             path: "/notifications",
             query: [URLQueryItem(name: "all", value: all ? "true" : "false")]
         )
-        return try await send(request, as: [GitHubNotification].self)
+        return try await conditionalSend(request, cacheKey: Self.notificationsKey, as: [GitHubNotification].self)
     }
 
     /// Confirms a repo exists and is reachable with the current token.

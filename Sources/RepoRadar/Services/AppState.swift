@@ -93,6 +93,7 @@ final class AppState: ObservableObject {
 
     private let repoDefaultsKey = "reporadar.repositories"
     private var refreshTask: Task<Void, Never>?
+    private var notificationsTask: Task<Void, Never>?
     private var deviceFlowTask: Task<Void, Never>?
     private var seenNotificationIDs: Set<String> = []
     private var didInitialNotificationSync = false
@@ -150,6 +151,7 @@ final class AppState: ObservableObject {
     func bootstrap() {
         requestNotificationPermission()
         startAutoRefresh()
+        startNotificationsPolling()
     }
 
     // MARK: - Token
@@ -268,11 +270,12 @@ final class AppState: ObservableObject {
         defer { isRefreshing = false }
         lastError = nil
 
-        // Pull requests for each monitored repo, concurrently.
+        // Pull requests for each monitored repo, concurrently. A nil result
+        // means unchanged (304) or a transient error — keep the existing data.
         await withTaskGroup(of: (String, [PullRequest]?).self) { group in
             for repo in repositories {
                 group.addTask {
-                    let prs = try? await GitHubClient.shared.pullRequests(for: repo)
+                    let prs = (try? await GitHubClient.shared.pullRequests(for: repo)) ?? nil
                     return (repo.fullName, prs)
                 }
             }
@@ -281,23 +284,46 @@ final class AppState: ObservableObject {
             }
         }
 
-        // Open PRs related to me (authored / assigned / review / mentioned).
+        // PRs related to me (authored / assigned / review / mentioned).
         do {
             myPullRequests = try await GitHubClient.shared.relatedOpenPullRequests()
         } catch {
             lastError = describe(error)
         }
 
-        // All account notifications (not limited to monitored repos).
+        // Notifications run on their own faster loop, but refresh them here too
+        // so a manual refresh updates everything at once.
+        await pollNotifications()
+
+        lastRefreshed = Date()
+    }
+
+    // MARK: - Notifications polling
+
+    /// Dedicated near-real-time notifications loop. Uses conditional requests
+    /// (cheap 304s) and obeys GitHub's `X-Poll-Interval` (~60s), independent of
+    /// the PR refresh interval.
+    func startNotificationsPolling() {
+        notificationsTask?.cancel()
+        notificationsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollNotifications()
+                let seconds = await GitHubClient.shared.notificationsPollSeconds()
+                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+            }
+        }
+    }
+
+    /// Fetches notifications conditionally; a nil result means "unchanged".
+    func pollNotifications() async {
+        guard !token.isEmpty else { return }
         do {
-            let fetched = try await GitHubClient.shared.notifications()
+            guard let fetched = try await GitHubClient.shared.notifications() else { return }
             deliverSystemNotifications(for: fetched)
             notifications = fetched.sorted { $0.updatedAt > $1.updatedAt }
         } catch {
-            lastError = describe(error)
+            // Transient; the next tick will retry.
         }
-
-        lastRefreshed = Date()
     }
 
     /// (Re)starts the auto-refresh timer using `refreshIntervalMinutes`.
@@ -319,6 +345,8 @@ final class AppState: ObservableObject {
     func stopAutoRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+        notificationsTask?.cancel()
+        notificationsTask = nil
     }
 
     // MARK: - System notifications
