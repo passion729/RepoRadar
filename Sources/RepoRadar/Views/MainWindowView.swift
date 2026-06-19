@@ -26,7 +26,7 @@ struct MainWindowView: View {
                 .environmentObject(state)
         }
         .toolbar {
-            ToolbarItemGroup {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button { openURL(state.myGitHubURL) } label: {
                     Image(systemName: "person.crop.circle")
                 }
@@ -45,8 +45,8 @@ struct MainWindowView: View {
                 .help(loc(.openGitHubNotifications))
             }
 
-            // Refresh sits in its own item so it's spaced apart from the links.
-            ToolbarItem {
+            // Refresh sits to the right of the GitHub links.
+            ToolbarItem(placement: .primaryAction) {
                 Button { Task { await state.refresh() } } label: {
                     if state.isRefreshing {
                         ProgressView().controlSize(.small)
