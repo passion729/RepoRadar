@@ -194,7 +194,16 @@ final class AppState: ObservableObject {
 
     // MARK: - Lifecycle
 
+    private var didBootstrap = false
+
+    /// One-time startup. The main window's `.task` fires every time the window
+    /// (re)appears, but auto-refresh and notification polling run as long-lived
+    /// tasks on this store — which outlives the window — so we must only start
+    /// them once. Re-running would force a redundant fetch and reset the timers
+    /// each time the window is reopened.
     func bootstrap() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
         requestNotificationPermission()
         startAutoRefresh()
         startNotificationsPolling()
