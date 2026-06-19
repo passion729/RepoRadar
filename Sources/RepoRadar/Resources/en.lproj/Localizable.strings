@@ -48,6 +48,8 @@
 "addRepo.title" = "Add Repository";
 "addRepo.subtitle" = "Enter owner/name, or paste a GitHub repository link.";
 "addRepo.placeholder" = "e.g. apple/swift";
+"addRepo.yourRepos" = "Your repositories";
+"addRepo.loadingRepos" = "Loading your repositories…";
 
 /* Settings */
 "settings.loginSection" = "Sign in with GitHub (recommended)";

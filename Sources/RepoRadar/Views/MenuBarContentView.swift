@@ -31,20 +31,22 @@ struct MenuBarContentView: View {
 
     private var header: some View {
         HStack {
-            Image(systemName: "dot.radiowaves.left.and.right")
+            OcticonShape(data: OcticonPath.markGithub)
+                .frame(width: 15, height: 15)
             Text("RepoRadar").font(theme.ui(.headline))
             Spacer()
-            if state.isRefreshing {
-                ProgressView().controlSize(.small)
-            } else {
-                Button {
-                    Task { await state.refresh() }
-                } label: {
+            Button {
+                Task { await state.refresh() }
+            } label: {
+                if state.isRefreshing {
+                    ProgressView().controlSize(.small)
+                } else {
                     Image(systemName: "arrow.clockwise")
                 }
-                .buttonStyle(.borderless)
-                .help(loc(.refresh))
             }
+            .buttonStyle(.borderless)
+            .disabled(state.isRefreshing)
+            .help(loc(.refresh))
         }
         .padding(10)
     }
@@ -64,9 +66,10 @@ struct MenuBarContentView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     summary
 
-                    if !state.myPullRequests.isEmpty {
+                    let openPRs = state.myPullRequests(in: .open)
+                    if !openPRs.isEmpty {
                         sectionHeader(loc(.sectionRelatedPRs))
-                        ForEach(state.myPullRequests.prefix(5)) { item in
+                        ForEach(openPRs.prefix(5)) { item in
                             PullRequestRow(pr: item.pr, relations: item.relations)
                                 .padding(.horizontal, 10)
                         }

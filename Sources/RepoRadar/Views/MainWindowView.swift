@@ -27,14 +27,18 @@ struct MainWindowView: View {
         }
         .toolbar {
             ToolbarItem {
-                if state.isRefreshing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button { Task { await state.refresh() } } label: {
+                // Native toolbar button so it matches the system sidebar-toggle
+                // button's sizing. Swap only the label (icon ↔ spinner) so the
+                // button itself never resizes.
+                Button { Task { await state.refresh() } } label: {
+                    if state.isRefreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .help(loc(.refresh))
                 }
+                .help(loc(.refresh))
+                .disabled(state.isRefreshing)
             }
         }
     }
@@ -101,7 +105,7 @@ struct MainWindowView: View {
                     }
                 }
             } header: {
-                HStack {
+                HStack(spacing: 0) {
                     Text(loc(.sectionRepositories))
                     Spacer()
                     Button { showingAdd = true } label: {
@@ -110,6 +114,7 @@ struct MainWindowView: View {
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .help(loc(.addRepoHelp))
+                    .padding(.trailing, 6)
                 }
             }
         }

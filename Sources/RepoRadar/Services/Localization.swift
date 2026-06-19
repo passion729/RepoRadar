@@ -146,6 +146,8 @@ enum LocKey {
     case addRepoTitle
     case addRepoSubtitle
     case addRepoPlaceholder
+    case addRepoYourRepos
+    case addRepoLoadingRepos
 
     // Settings
     case loginSectionTitle
@@ -259,6 +261,8 @@ enum LocKey {
         case .addRepoTitle: return "addRepo.title"
         case .addRepoSubtitle: return "addRepo.subtitle"
         case .addRepoPlaceholder: return "addRepo.placeholder"
+        case .addRepoYourRepos: return "addRepo.yourRepos"
+        case .addRepoLoadingRepos: return "addRepo.loadingRepos"
 
         case .loginSectionTitle: return "settings.loginSection"
         case .loggedIn: return "settings.loggedIn"

@@ -19,6 +19,14 @@ final class AppState: ObservableObject {
     @Published var isLoadingMyPRs = false
     @Published var notifications: [GitHubNotification] = []
 
+    /// Per-repo detail PRs (all open + last-month closed), keyed by "owner/name".
+    /// Keying by repo means a late-finishing fetch can never land under the
+    /// wrong repo, and cached repos don't re-fetch on every sidebar switch.
+    @Published var repoDetailPRs: [String: [PullRequest]] = [:]
+    @Published var loadingRepoDetail: Set<String> = []
+    private var repoDetailFetchedAt: [String: Date] = [:]
+    private let repoDetailStaleSeconds: TimeInterval = 60
+
     /// Closed/merged PRs are limited to the last `recentDays`; open PRs are unbounded.
     static let recentDays = 30
     @Published var token: String = ""
@@ -247,6 +255,7 @@ final class AppState: ObservableObject {
     func removeRepository(_ repo: Repository) {
         repositories.removeAll { $0 == repo }
         pullRequestsByRepo[repo.fullName] = nil
+        repoDetailPRs[repo.fullName] = nil
         persistRepositories()
     }
 
@@ -302,17 +311,80 @@ final class AppState: ObservableObject {
 
     // MARK: - Related PRs (all open + last-month closed/merged)
 
-    /// Loads related PRs: all open, plus closed/merged from the last month.
+    private static let myPRsBatch = 20   // items per page wave
+
+    /// Loads related PRs in time-ordered batches: newest first, one page at a
+    /// time across all relationships, appending each wave to the list. Open PRs
+    /// stream in first, then closed/merged from the last month.
     func loadRelatedPRs() async {
         guard !token.isEmpty else { return }
         isLoadingMyPRs = true
         defer { isLoadingMyPRs = false }
+
+        let since = Self.dateString(daysAgo: Self.recentDays)
+        var byID: [Int: RelatedPullRequest] = [:]
+
+        func runPhase(state: String) async {
+            var active = Set(PRRelation.allCases)   // relationships with more pages
+            var page = 1
+            while !active.isEmpty && page <= 10 {
+                let rels = Array(active)
+                let waves = await withTaskGroup(of: (PRRelation, [PullRequest])?.self) { group -> [(PRRelation, [PullRequest])] in
+                    for rel in rels {
+                        group.addTask {
+                            guard let prs = try? await GitHubClient.shared.searchPRsPage(
+                                qualifier: rel.searchQualifier,
+                                state: state,
+                                page: page,
+                                perPage: Self.myPRsBatch
+                            ) else { return nil }
+                            return (rel, prs)
+                        }
+                    }
+                    var out: [(PRRelation, [PullRequest])] = []
+                    for await result in group { if let result { out.append(result) } }
+                    return out
+                }
+                for (rel, prs) in waves {
+                    for pr in prs {
+                        byID[pr.id, default: RelatedPullRequest(pr: pr, relations: [])]
+                            .relations.insert(rel)
+                    }
+                    if prs.count < Self.myPRsBatch { active.remove(rel) }   // exhausted
+                }
+                myPullRequests = Array(byID.values)   // append this wave
+                page += 1
+            }
+        }
+
+        await runPhase(state: "is:open")
+        await runPhase(state: "is:closed updated:>=\(since)")
+    }
+
+    /// Loads a repo's detail PRs into the cache. Skips if already loading or if
+    /// the cache is still fresh (unless `force`). Result is stored under the
+    /// repo key, so switching repos mid-flight never crosses data over.
+    func loadRepoDetail(_ repo: Repository, force: Bool = false) async {
+        guard !token.isEmpty else { return }
+        let key = repo.fullName
+        if loadingRepoDetail.contains(key) { return }
+        if !force,
+           let at = repoDetailFetchedAt[key],
+           Date().timeIntervalSince(at) < repoDetailStaleSeconds {
+            return
+        }
+        loadingRepoDetail.insert(key)
+        defer { loadingRepoDetail.remove(key) }
+        let since = Calendar.current.date(byAdding: .day, value: -Self.recentDays, to: Date()) ?? Date()
         do {
-            myPullRequests = try await GitHubClient.shared.relatedPullRequests(
-                closedSince: Self.dateString(daysAgo: Self.recentDays)
-            )
+            // Show open PRs first, then fill in closed/merged.
+            let open = try await GitHubClient.shared.openRepoPRs(repo)
+            repoDetailPRs[key] = open
+            let closed = (try? await GitHubClient.shared.recentClosedRepoPRs(repo, since: since)) ?? []
+            repoDetailPRs[key] = open + closed
+            repoDetailFetchedAt[key] = Date()
         } catch {
-            lastError = describe(error)
+            // Keep any previously cached data on error.
         }
     }
 

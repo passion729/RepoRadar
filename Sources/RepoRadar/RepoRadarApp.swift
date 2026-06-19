@@ -23,13 +23,15 @@ struct RepoRadarApp: App {
             }
         }
 
-        // Always-on menu bar entry.
-        MenuBarExtra("RepoRadar", systemImage: "dot.radiowaves.left.and.right") {
+        // Always-on menu bar entry — GitHub mark octicon as the status icon.
+        MenuBarExtra {
             MenuBarContentView()
                 .environmentObject(state)
                 .environmentObject(loc)
                 .environment(\.fontTheme, state.menuFontTheme)
                 .frame(width: 360)
+        } label: {
+            Image(nsImage: OcticonPath.templateImage(OcticonPath.markGithub, size: 16))
         }
         .menuBarExtraStyle(.window)
 

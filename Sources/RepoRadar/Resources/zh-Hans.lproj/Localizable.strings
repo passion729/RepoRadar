@@ -48,6 +48,8 @@
 "addRepo.title" = "添加仓库";
 "addRepo.subtitle" = "输入 owner/name,或直接粘贴 GitHub 仓库链接。";
 "addRepo.placeholder" = "例如 apple/swift";
+"addRepo.yourRepos" = "你的仓库";
+"addRepo.loadingRepos" = "正在加载你的仓库…";
 
 /* Settings */
 "settings.loginSection" = "用 GitHub 登录(推荐)";

@@ -2,15 +2,19 @@ import SwiftUI
 
 /// A single repo's PRs, grouped by status via a top tab (Open / Merged /
 /// Closed). Open shows all; Merged/Closed are limited to the last month.
+/// Data is cached per repo in AppState, so switching repos is instant and a
+/// late fetch can't land under the wrong repo.
 struct PullRequestListView: View {
+    @EnvironmentObject var state: AppState
     @EnvironmentObject var loc: Localizer
     let repo: Repository
 
-    @State private var prs: [PullRequest] = []
     @State private var tab: PRState = .open
-    @State private var isLoading = false
 
     private static let tabs: [PRState] = [.open, .merged, .closed]
+
+    private var prs: [PullRequest] { state.repoDetailPRs[repo.fullName] ?? [] }
+    private var isLoading: Bool { state.loadingRepoDetail.contains(repo.fullName) }
 
     private func items(_ status: PRState) -> [PullRequest] {
         prs.filter { $0.prState == status }.sorted { $0.updatedAt > $1.updatedAt }
@@ -36,7 +40,7 @@ struct PullRequestListView: View {
         .navigationTitle(repo.fullName)
         .task(id: repo.fullName) {
             tab = .open
-            await load()
+            await state.loadRepoDetail(repo)
         }
     }
 
@@ -59,18 +63,6 @@ struct PullRequestListView: View {
             List(list) { pr in
                 PullRequestRow(pr: pr)
             }
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        let since = Calendar.current.date(byAdding: .day, value: -AppState.recentDays, to: Date()) ?? Date()
-        do {
-            prs = try await GitHubClient.shared.repoPullRequests(repo, recentSince: since)
-        } catch {
-            prs = []
         }
     }
 }
