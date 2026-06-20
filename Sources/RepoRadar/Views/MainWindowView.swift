@@ -26,7 +26,11 @@ struct MainWindowView: View {
                 .environmentObject(state)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
+            // Default placement (not .primaryAction) lets `ToolbarSpacer`
+            // actually split the Liquid Glass background into separate
+            // capsules on macOS 26 — forcing .primaryAction welds every item
+            // into one shared capsule that the spacer can't break.
+            ToolbarItemGroup {
                 Button { openURL(state.myGitHubURL) } label: {
                     Image(systemName: "person.crop.circle")
                 }
@@ -45,19 +49,44 @@ struct MainWindowView: View {
                 .help(loc(.openGitHubNotifications))
             }
 
-            // Refresh sits to the right of the GitHub links.
-            ToolbarItem(placement: .primaryAction) {
-                Button { Task { await state.refresh() } } label: {
-                    if state.isRefreshing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
+            // The Liquid Glass toolbar coalesces a bare SF Symbol button back
+            // into the neighbouring glass group (a ProgressView escapes this
+            // because it's a custom NSView — hence the "separate only while
+            // spinning" behaviour). So instead of relying on the system's
+            // grouping, we pull refresh out of the shared background and give
+            // it its own glass pill explicitly. The spacer adds the gap.
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.fixed)
+                ToolbarItem {
+                    refreshButton
+                        .glassEffect(.regular.interactive(), in: .circle)
                 }
-                .help(loc(.refresh))
-                .disabled(state.isRefreshing)
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem { refreshButton }
             }
         }
+    }
+
+    private var refreshButton: some View {
+        Button { Task { await state.refresh() } } label: {
+            Group {
+                if state.isRefreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .imageScale(.large)
+                }
+            }
+            // Match the height of the system-sized GitHub *group* capsule
+            // (taller than a standalone toolbar button) so the refresh pill
+            // doesn't look shrunken next to it.
+            .frame(width: 36, height: 36)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(loc(.refresh))
+        .disabled(state.isRefreshing)
     }
 
     // MARK: Sidebar
