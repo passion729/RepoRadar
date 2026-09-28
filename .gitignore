@@ -1,0 +1,7 @@
+.build/
+*.app
+.swiftpm/
+.DS_Store
+# Installed agent skills are third-party; restore them from skills-lock.json with `npx skills`.
+.agents/
+.claude/
