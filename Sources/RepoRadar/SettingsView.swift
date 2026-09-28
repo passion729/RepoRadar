@@ -92,6 +92,7 @@ struct GeneralSettings: View {
     @AppStorage("refreshMinutes") private var refreshMinutes = 5
     @AppStorage("lookbackDays") private var lookbackDays = 30
     @AppStorage("notifyFailures") private var notifyFailures = true
+    @AppStorage("notifyFinishedRuns") private var notifyFinishedRuns = true
     @AppStorage("notifyInbox") private var notifyInbox = true
     @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
 
@@ -112,6 +113,7 @@ struct GeneralSettings: View {
                 Toggle("Include activity on my own pull requests and issues", isOn: $notifyOwnActivity)
                     .disabled(!notifyInbox)
                     .padding(.leading, 20)
+                Toggle("Notify when a workflow run finishes", isOn: $notifyFinishedRuns)
                 Toggle("Notify when a workflow starts failing", isOn: $notifyFailures)
             }
         }

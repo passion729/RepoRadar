@@ -9,7 +9,10 @@ final class AppState {
 
     /// Recent runs (newest first) of every repo that has any.
     private(set) var runsByRepo: [String: [WorkflowRun]] = [:] {
-        didSet { latestRuns = runsByRepo.values.flatMap { $0.latestPerWorkflow() } }
+        didSet {
+            latestRuns = runsByRepo.values.flatMap { $0.latestPerWorkflow() }
+            announceFinishedRuns(before: oldValue)
+        }
     }
     /// Current status of every workflow across all repos. Stored rather than computed
     /// so views that read it many times per body don't re-derive it.
@@ -43,7 +46,8 @@ final class AppState {
     private var canNotify: Bool { Bundle.main.bundleIdentifier != nil }  // `swift run` has no bundle
 
     init() {
-        defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false])
+        defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false,
+                                      "notifyFinishedRuns": true])
     }
 
     var repos: [String] { runsByRepo.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending } }
@@ -64,6 +68,16 @@ final class AppState {
                     await refresh()
                     let minutes = max(1, defaults.integer(forKey: "refreshMinutes"))
                     try? await Task.sleep(for: .seconds(minutes * 60))
+                }
+            },
+            // Runs are watched every 15 s: repos with a run in progress each time, and repos with a run
+            // in the last day every minute, to catch newly started runs. Unchanged responses are free 304s.
+            Task {
+                var tick = 0
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    tick += 1
+                    await watchRuns(includeRecent: tick % 4 == 0)
                 }
             },
             // The inbox is polled every minute: unchanged responses are 304s, which are free.
@@ -98,6 +112,47 @@ final class AppState {
             publishFailures()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func watchRuns(includeRecent: Bool) async {
+        guard hasToken, !isRefreshing else { return }
+        var watched = Set(runsByRepo.filter { $0.value.contains(where: \.state.isActive) }.keys)
+        if includeRecent {
+            let dayAgo = Date().addingTimeInterval(-86_400)
+            watched.formUnion(runsByRepo.filter { ($0.value.first?.createdAt ?? .distantPast) > dayAgo }.keys)
+        }
+        guard !watched.isEmpty else { return }
+        let updates = await withTaskGroup(of: (String, [WorkflowRun]?).self) { group in
+            for repo in watched {
+                group.addTask { [client] in (repo, try? await client.runs(of: repo)) }
+            }
+            var result: [String: [WorkflowRun]] = [:]
+            for await (repo, runs) in group { if let runs { result[repo] = runs } }
+            return result
+        }
+        let merged = runsByRepo.merging(updates) { _, new in new }
+        if merged != runsByRepo { runsByRepo = merged }
+    }
+
+    /// Notifies about runs that were queued or running and have now completed.
+    private func announceFinishedRuns(before old: [String: [WorkflowRun]]) {
+        let wasActive = Set(old.values.joined().filter(\.state.isActive).map(\.id))
+        guard !wasActive.isEmpty else { return }
+        let finished = runsByRepo.values.joined().filter { wasActive.contains($0.id) && !$0.state.isActive }
+        for run in finished {
+            // The failure alert below would repeat this one; mark it as already reported.
+            if run.state == .failure { knownFailures?.insert(run.id) }
+            guard defaults.bool(forKey: "notifyFinishedRuns") else { continue }
+            let verb = switch run.state {
+            case .success: "succeeded"
+            case .failure: "failed"
+            case .cancelled: "was cancelled"
+            default: "finished"
+            }
+            post(id: "finished-\(run.id)", title: "\(run.workflowName) \(verb)", subtitle: run.repo,
+                 body: "\(run.displayTitle) · \(run.branchName) · \(Duration.seconds(run.duration).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow)))",
+                 url: run.htmlUrl)
         }
     }
 
