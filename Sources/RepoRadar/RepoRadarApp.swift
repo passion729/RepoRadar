@@ -23,10 +23,7 @@ struct RepoRadarApp: App {
         MenuBarExtra {
             MenuBarContent().environment(state)
         } label: {
-            // Failures matter most, then unread notifications, then the overall Actions status.
-            Image(systemName: state.failingCount > 0 ? RunState.failure.symbol
-                  : state.unreadCount > 0 ? "bell.badge" : state.latestRuns.overall.map(\.symbol) ?? "bolt.horizontal.circle")
-                .accessibilityLabel("RepoRadar")
+            MenuBarLabel().environment(state)
         }
 
         Settings {

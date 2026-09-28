@@ -30,6 +30,8 @@ final class AppState {
     private(set) var rateLimit: RateLimit?
     private(set) var hasToken = Keychain.load() != nil
     var error: String?
+    /// Set by the menu bar extra to jump the main window to a section.
+    var requestedSection: SidebarItem?
 
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
     /// Ids seen at the last refresh; nil until the first load so launching doesn't notify about old items.

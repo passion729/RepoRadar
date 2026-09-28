@@ -42,6 +42,11 @@ struct MainView: View {
             }
         }
         .focusedSceneValue(\.sidebarSelection, $selection)
+        .onChange(of: state.requestedSection, initial: true) {
+            guard let requested = state.requestedSection else { return }
+            selection = requested
+            state.requestedSection = nil
+        }
         .focusedSceneValue(\.focusTarget, Binding(get: { focus }, set: { focus = $0 }))
     }
 
