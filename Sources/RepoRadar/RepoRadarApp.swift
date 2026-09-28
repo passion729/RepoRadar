@@ -8,23 +8,18 @@ struct RepoRadarApp: App {
 
     var body: some Scene {
         // A single dashboard window: it shows the whole account, so a second copy adds nothing.
-        // `Window` also lets the menu bar extra bring it back with `openWindow(id:)`.
+        // `Window` also lets the menu bar item bring it back with `openWindow(id:)`.
         Window("RepoRadar", id: "main") {
             MainView()
                 .appliesFontTheme()
                 .environment(state)
                 .frame(minWidth: 960, minHeight: 480)
+                .background(MenuBarWindowOpener())
         }
         .defaultSize(width: 1320, height: 800)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified)
         .commands { AppCommands(state: state) }
-
-        MenuBarExtra {
-            MenuBarContent().environment(state)
-        } label: {
-            MenuBarLabel().environment(state)
-        }
 
         Settings {
             SettingsView().environment(state).appliesFontTheme()
@@ -37,7 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if Bundle.main.bundleIdentifier != nil { UNUserNotificationCenter.current().delegate = self }
         // `swift run` launches a bare binary; make it a regular foreground app.
         NSApp.setActivationPolicy(.regular)
-        Task { @MainActor in AppState.shared.start() }
+        Task { @MainActor in
+            MenuBarController.shared = MenuBarController(state: AppState.shared)
+            AppState.shared.start()
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
