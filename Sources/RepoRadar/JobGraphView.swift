@@ -9,7 +9,12 @@ struct JobGraphView: View {
     /// Free pan offset of the graph; the canvas is unbounded, like GitHub's.
     @State private var offset: CGSize = .zero
     @State private var scale: CGFloat = 1
-    @State private var dragStart: CGSize?
+    /// Where a left-button drag started (window point) and the offset at that moment.
+    @State private var panAnchor: (point: CGPoint, offset: CGSize)?
+    @State private var isPanning = false
+    @State private var mouseMonitor: Any?
+    /// The pane's frame in window coordinates (top-left origin), for hit-testing mouse events.
+    @State private var paneFrame: CGRect = .zero
     @State private var isHovering = false
     @State private var scrollMonitor: Any?
     @State private var magnifyMonitor: Any?
@@ -88,13 +93,13 @@ struct JobGraphView: View {
         .offset(offset)
         // Min 0: the graph clips and pans, so it must not force its full size onto the pane (that pushed headers away).
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { paneFrame = $0 }
         .onGeometryChange(for: CGSize.self, of: \.size) { size in
             containerSize = size
             offset = clamped(offset)  // shrinking the pane must not strand the graph outside it
         }
         .clipped()
         .contentShape(.rect)  // empty space is grabbable too
-        .gesture(pan)
         .onTapGesture(count: 2) {  // double-click resets to 100% at the top-left
             withAnimation(.smooth) {
                 scale = 1
@@ -118,25 +123,47 @@ struct JobGraphView: View {
                 pointer = nil
             }
         }
-        .onAppear(perform: installScrollMonitor)
+        .onAppear {
+            installScrollMonitor()
+            installMouseMonitor()
+        }
         .onDisappear {
             scrollMonitor.map(NSEvent.removeMonitor)
             magnifyMonitor.map(NSEvent.removeMonitor)
+            mouseMonitor.map(NSEvent.removeMonitor)
+            mouseMonitor = nil
             scrollMonitor = nil
             magnifyMonitor = nil
         }
         .help("Drag or two-finger scroll to pan · mouse wheel or pinch to zoom · double-click to reset")
     }
 
-    // Drag anywhere to pan. The small minimum distance leaves plain clicks to the job nodes.
-    private var pan: some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .global)
-            .onChanged { drag in
-                let start = dragStart ?? offset
-                dragStart = start
-                offset = clamped(CGSize(width: start.width + drag.translation.width, height: start.height + drag.translation.height))
+    /// Left-button drag pans. An app-level monitor rather than a DragGesture: inside the split panes the
+    /// gesture never received the drag. Events are always passed on, so job rows and Fit still get clicks;
+    /// panning starts only after 3 pt of movement.
+    private func installMouseMonitor() {
+        guard mouseMonitor == nil else { return }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { event in
+            guard let content = event.window?.contentView else { return event }
+            let point = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+            switch event.type {
+            case .leftMouseDown:
+                // Only touch state for clicks on this graph, so clicks elsewhere (the table) never re-render it mid-click.
+                guard isHovering, paneFrame.contains(point) else { break }
+                panAnchor = (point, offset)
+                isPanning = false
+            case .leftMouseDragged:
+                guard let anchor = panAnchor else { break }
+                let delta = CGSize(width: point.x - anchor.point.x, height: point.y - anchor.point.y)
+                if !isPanning, hypot(delta.width, delta.height) < 3 { break }
+                isPanning = true
+                offset = clamped(CGSize(width: anchor.offset.width + delta.width, height: anchor.offset.height + delta.height))
+            default:
+                if panAnchor != nil { panAnchor = nil }
+                if isPanning { isPanning = false }
             }
-            .onEnded { _ in dragStart = nil }
+            return event
+        }
     }
 
     private func fit() {
