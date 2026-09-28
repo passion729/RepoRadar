@@ -34,9 +34,11 @@ struct FontTheme: Equatable {
     var family = ""
     var monoFamily = ""
     var size: CGFloat = 13
+    /// Multiplier for zoomable canvases (the workflow graph); 1 everywhere else.
+    var zoom: CGFloat = 1
 
     func font(_ role: FontRole = .body, mono: Bool = false, weight: Font.Weight? = nil) -> Font {
-        let points = max(8, size + role.offset)
+        let points = max(8, size + role.offset) * zoom
         let chosen = mono ? monoFamily : family
         let base = chosen.isEmpty
             ? Font.system(size: points, design: mono ? .monospaced : .default)

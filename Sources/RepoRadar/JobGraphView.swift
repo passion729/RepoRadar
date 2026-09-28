@@ -20,17 +20,21 @@ struct JobGraphView: View {
     /// How much of the graph must stay inside the pane, so it can never be panned out of sight.
     private let keepVisible: CGFloat = 80
 
-    private let nodeSize = CGSize(width: 200, height: 40)
+    @Environment(\.fontTheme) private var fontTheme
+
+    // Zoom re-lays out the graph at the new size (instead of scaleEffect, which stretches a bitmap and blurs),
+    // so every metric is its 100% value times `scale`.
+    private var nodeSize: CGSize { CGSize(width: 200 * scale, height: 40 * scale) }
     /// Row height and vertical padding inside a grouped box.
-    private let groupRow: CGFloat = 28
-    private let groupPadding: CGFloat = 6  // 6 + 28/2 = 20: first row level with a single box's center, so lines run straight
-    private let columnGap: CGFloat = 56
-    private let rowGap: CGFloat = 16
-    private let inset: CGFloat = 20
+    private var groupRow: CGFloat { 28 * scale }
+    private var groupPadding: CGFloat { 6 * scale }  // 6 + 28/2 = 20: first row level with a single box's center
+    private var columnGap: CGFloat { 56 * scale }
+    private var rowGap: CGFloat { 16 * scale }
+    private var inset: CGFloat { 20 * scale }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 16 * scale) {
+            VStack(alignment: .leading, spacing: 2 * scale) {
                 Text(title).themeFont(.title3, weight: .semibold)
                 Text("on: \(trigger)").foregroundStyle(.secondary)
             }
@@ -39,7 +43,7 @@ struct JobGraphView: View {
                     for edge in graph.edges {
                         guard let (from, to) = endpoints(edge) else { continue }
                         context.stroke(connector(from: from.rect, fromY: from.y, to: to.rect, toY: to.y),
-                                       with: .style(.tertiary), lineWidth: 1.5)
+                                       with: .style(.tertiary), lineWidth: 1.5 * scale)
                     }
                 }
                 .frame(width: canvasSize.width, height: canvasSize.height)
@@ -63,9 +67,10 @@ struct JobGraphView: View {
                     for edge in graph.edges {
                         guard let (from, to) = endpoints(edge) else { continue }
                         for point in [CGPoint(x: from.rect.maxX, y: from.y), CGPoint(x: to.rect.minX, y: to.y)] {
-                            let dot = Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
+                            let (outer, inner) = (4 * scale, 3 * scale)
+                            let dot = Path(ellipseIn: CGRect(x: point.x - outer, y: point.y - outer, width: outer * 2, height: outer * 2))
                             context.fill(dot, with: .color(Color(nsColor: .windowBackgroundColor)))
-                            context.fill(Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)),
+                            context.fill(Path(ellipseIn: CGRect(x: point.x - inner, y: point.y - inner, width: inner * 2, height: inner * 2)),
                                          with: .style(.secondary))
                         }
                     }
@@ -77,9 +82,9 @@ struct JobGraphView: View {
             .frame(width: canvasSize.width, height: canvasSize.height, alignment: .topLeading)
         }
         .padding(inset)
+        .environment(\.fontTheme, { var theme = fontTheme; theme.zoom = scale; return theme }())
         .fixedSize()
-        .onGeometryChange(for: CGSize.self, of: \.size) { contentSize = $0 }  // unscaled: scaleEffect doesn't affect layout
-        .scaleEffect(scale, anchor: .topLeading)
+        .onGeometryChange(for: CGSize.self, of: \.size) { contentSize = $0 }  // at the current zoom
         .offset(offset)
         // Min 0: the graph clips and pans, so it must not force its full size onto the pane (that pushed headers away).
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
@@ -103,7 +108,6 @@ struct JobGraphView: View {
                 .help("Fit the graph to the pane and center it")
                 .padding(10)
         }
-        .pointerStyle(dragStart == nil ? .grabIdle : .grabActive)
         .onContinuousHover { phase in
             switch phase {
             case .active(let location):
@@ -137,7 +141,8 @@ struct JobGraphView: View {
 
     private func fit() {
         guard contentSize != .zero, containerSize != .zero else { return }
-        let placement = Self.fitted(content: contentSize, in: containerSize)
+        let unscaled = CGSize(width: contentSize.width / scale, height: contentSize.height / scale)
+        let placement = Self.fitted(content: unscaled, in: containerSize)
         withAnimation(.smooth) {
             scale = placement.scale
             offset = placement.offset
@@ -160,8 +165,10 @@ struct JobGraphView: View {
             return min(max(value, margin - content), container - margin)
         }
         guard contentSize != .zero, containerSize != .zero else { return proposed }
-        return CGSize(width: limit(proposed.width, content: contentSize.width * scale, container: containerSize.width),
-                      height: limit(proposed.height, content: contentSize.height * scale, container: containerSize.height))
+        // contentSize is measured at the current zoom; rescale it when checking a new zoom level.
+        let ratio = scale / self.scale
+        return CGSize(width: limit(proposed.width, content: contentSize.width * ratio, container: containerSize.width),
+                      height: limit(proposed.height, content: contentSize.height * ratio, container: containerSize.height))
     }
 
     /// Trackpad: two-finger scroll pans, pinch zooms. Mouse: the wheel zooms around the pointer.
@@ -286,6 +293,7 @@ struct JobGraphView: View {
 
 private struct JobNode: View {
     @Environment(AppState.self) private var state
+    @Environment(\.fontTheme) private var theme
     let job: WorkflowJob
     let isSelected: Bool
     let select: () -> Void
@@ -294,7 +302,7 @@ private struct JobNode: View {
 
     var body: some View {
         Button(action: select) {
-            HStack(spacing: 8) {
+            HStack(spacing: 8 * theme.zoom) {
                 Image(systemName: job.state.symbol)
                     .foregroundStyle(job.state.color)
                     .symbolEffect(.pulse, isActive: job.state.isActive && !reduceMotion)
@@ -307,15 +315,16 @@ private struct JobNode: View {
                 }
             }
             .themeFont(.callout)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 12 * theme.zoom)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.primary.opacity(isHovered ? 0.09 : 0.05), in: .rect(cornerRadius: 8))
-            .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 8))  // opaque: hides lines behind
+            .background(Color.primary.opacity(isHovered ? 0.09 : 0.05), in: .rect(cornerRadius: 8 * theme.zoom))
+            .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 8 * theme.zoom))  // opaque: hides lines behind
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.15), lineWidth: isSelected ? 2 : 1)
+                RoundedRectangle(cornerRadius: 8 * theme.zoom)
+                    .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.15),
+                                  lineWidth: (isSelected ? 2 : 1) * max(1, theme.zoom))
             }
-            .contentShape(.rect(cornerRadius: 8))
+            .contentShape(.rect(cornerRadius: 8 * theme.zoom))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
@@ -332,6 +341,7 @@ private struct JobNode: View {
 
 /// Parallel jobs sharing the same neighbours, in one box with a selectable row per job.
 private struct JobGroupNode: View {
+    @Environment(\.fontTheme) private var theme
     let jobs: [WorkflowJob]
     let rowHeight: CGFloat
     let padding: CGFloat
@@ -345,14 +355,17 @@ private struct JobGroupNode: View {
             }
         }
         .padding(.vertical, padding)
-        .padding(.horizontal, 4)
-        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 8))
-        .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 8))  // opaque: hides lines behind
-        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.15)) }
+        .padding(.horizontal, 4 * theme.zoom)
+        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 8 * theme.zoom))
+        .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 8 * theme.zoom))  // opaque: hides lines behind
+        .overlay {
+            RoundedRectangle(cornerRadius: 8 * theme.zoom).strokeBorder(Color.primary.opacity(0.15), lineWidth: max(1, theme.zoom))
+        }
     }
 }
 
 private struct JobGroupRow: View {
+    @Environment(\.fontTheme) private var theme
     let job: WorkflowJob
     let isSelected: Bool
     let select: () -> Void
@@ -361,7 +374,7 @@ private struct JobGroupRow: View {
 
     var body: some View {
         Button(action: select) {
-            HStack(spacing: 8) {
+            HStack(spacing: 8 * theme.zoom) {
                 Image(systemName: job.state.symbol)
                     .foregroundStyle(job.state.color)
                     .symbolEffect(.pulse, isActive: job.state.isActive && !reduceMotion)
@@ -374,11 +387,11 @@ private struct JobGroupRow: View {
                 }
             }
             .themeFont(.callout)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 8 * theme.zoom)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(isSelected ? Color.accentColor.opacity(0.25) : Color.primary.opacity(isHovered ? 0.06 : 0),
-                        in: .rect(cornerRadius: 6))
-            .contentShape(.rect(cornerRadius: 6))
+                        in: .rect(cornerRadius: 6 * theme.zoom))
+            .contentShape(.rect(cornerRadius: 6 * theme.zoom))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
