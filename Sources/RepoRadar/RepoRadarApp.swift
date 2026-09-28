@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if Bundle.main.bundleIdentifier != nil { UNUserNotificationCenter.current().delegate = self }
         // `swift run` launches a bare binary; make it a regular foreground app.
         NSApp.setActivationPolicy(.regular)
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.lastWindowClose = Date()
+        }
         Task { @MainActor in
             MenuBarController.shared = MenuBarController(state: AppState.shared)
             AppState.shared.start()
@@ -40,6 +43,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     /// Closing the window keeps RepoRadar running in the menu bar, like most Mac apps.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// When a window last closed. SwiftUI can still end the app when its only `Window` scene closes,
+    /// bypassing the delegate method above, so a termination right after a close is cancelled.
+    private var lastWindowClose: Date = .distantPast
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Date().timeIntervalSince(lastWindowClose) < 1 ? .terminateCancel : .terminateNow
+    }
 
     /// Clicking the Dock icon with no window open brings the main window back.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
