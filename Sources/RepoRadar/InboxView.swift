@@ -64,6 +64,7 @@ struct InboxView: View {
             }
         }
         .focusedSceneValue(\.selectedNotifications, selectedItems)
+        .focusesTable(onChangeOf: selection)
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.webURL))
     }
 
@@ -100,8 +101,13 @@ struct NotificationTable: View {
     @Binding var sortOrder: [KeyPathComparator<GitHubNotification>]
     @SceneStorage("notificationTableColumns.v3") private var columns = TableColumnCustomization<GitHubNotification>()
 
+    /// Single selection: dragging across rows moves the selection instead of extending it.
+    private var single: Binding<GitHubNotification.ID?> {
+        Binding(get: { selection.first }, set: { selection = $0.map { [$0] } ?? [] })
+    }
+
     var body: some View {
-        Table(of: GitHubNotification.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+        Table(of: GitHubNotification.self, selection: single, sortOrder: $sortOrder, columnCustomization: $columns) {
             TableColumn("", value: \.unreadRank) { item in
                 StatusDot(color: item.unread ? .accentColor : .clear)
                     .accessibilityLabel(item.unread ? "Unread" : "Read")

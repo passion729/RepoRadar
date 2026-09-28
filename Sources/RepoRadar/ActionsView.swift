@@ -73,6 +73,8 @@ struct ActionsView: View {
             Text("GitHub stops the in-progress jobs. You can re-run them afterwards.")
         }
         .focusedSceneValue(\.selectedRuns, selectedRuns)
+        .focusesTable(onChangeOf: selection)
+
         .focusedSceneValue(\.selectedURLs, selectedRuns.map(\.htmlUrl))
     }
 
@@ -121,8 +123,13 @@ struct RunTable: View {
     @Binding var sortOrder: [KeyPathComparator<WorkflowRun>]
     @SceneStorage("runTableColumns.v3") private var columns = TableColumnCustomization<WorkflowRun>()
 
+    /// Single selection: dragging across rows moves the selection instead of extending it.
+    private var single: Binding<WorkflowRun.ID?> {
+        Binding(get: { selection.first }, set: { selection = $0.map { [$0] } ?? [] })
+    }
+
     var body: some View {
-        Table(of: WorkflowRun.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+        Table(of: WorkflowRun.self, selection: single, sortOrder: $sortOrder, columnCustomization: $columns) {
             TableColumn("", value: \.state) { StatusDot(color: $0.state.color).help($0.state.label) }
                 .width(14)
                 .customizationID("dot")

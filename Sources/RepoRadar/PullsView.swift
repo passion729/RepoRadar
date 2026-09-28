@@ -38,6 +38,7 @@ struct PullsView: View {
             }
         }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.pr.htmlUrl))
+        .focusesTable(onChangeOf: selection)
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -73,8 +74,13 @@ struct PullTable: View {
     @Binding var sortOrder: [KeyPathComparator<PullItem>]
     @SceneStorage("pullTableColumns.v3") private var columns = TableColumnCustomization<PullItem>()
 
+    /// Single selection: dragging across rows moves the selection instead of extending it.
+    private var single: Binding<PullItem.ID?> {
+        Binding(get: { selection.first }, set: { selection = $0.map { [$0] } ?? [] })
+    }
+
     var body: some View {
-        Table(of: PullItem.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+        Table(of: PullItem.self, selection: single, sortOrder: $sortOrder, columnCustomization: $columns) {
             TableColumn("", value: \.isDraftRank) { item in
                 StatusDot(color: item.pr.isDraft ? .gray : .green).help(item.pr.isDraft ? "Draft" : "Open")
             }

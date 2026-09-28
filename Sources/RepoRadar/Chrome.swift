@@ -433,3 +433,35 @@ struct PaneSplit<Primary: View, Detail: View>: View {
             .zIndex(1)
     }
 }
+
+// MARK: - Table focus
+
+extension View {
+    /// Moves keyboard focus to the main table when its selection changes. After picking a sidebar item,
+    /// the sidebar kept focus even though a row was clicked, so the new selection drew in inactive gray.
+    func focusesTable<Value: Equatable>(onChangeOf selection: Value) -> some View {
+        onChange(of: selection) {
+            DispatchQueue.main.async {
+                // The main window, even when it isn't key yet (keyWindow is nil while the app activates).
+                for window in NSApp.windows where window.isVisible {
+                    guard let table = mainTable(in: window.contentView) else { continue }
+                    if window.firstResponder !== table { window.makeFirstResponder(table) }
+                    return
+                }
+            }
+        }
+    }
+}
+
+/// The multi-column table in the window; the sidebar and detail lists have a single column.
+@MainActor private func mainTable(in view: NSView?) -> NSTableView? {
+    guard let view else { return nil }
+    // SwiftUI builds both on NSOutlineView; only the main table has several columns.
+    if let table = view as? NSTableView, table.tableColumns.count > 3, !table.isHiddenOrHasHiddenAncestor {
+        return table
+    }
+    for subview in view.subviews {
+        if let table = mainTable(in: subview) { return table }
+    }
+    return nil
+}
