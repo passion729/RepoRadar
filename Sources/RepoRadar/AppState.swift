@@ -11,6 +11,7 @@ final class AppState {
     private(set) var runsByRepo: [String: [WorkflowRun]] = [:] {
         didSet {
             latestRuns = runsByRepo.values.flatMap { $0.latestPerWorkflow() }
+            announceStartedRuns(before: oldValue)
             announceFinishedRuns(before: oldValue)
         }
     }
@@ -47,7 +48,7 @@ final class AppState {
 
     init() {
         defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false,
-                                      "notifyFinishedRuns": true])
+                                      "notifyFinishedRuns": true, "notifyStartedRuns": true])
     }
 
     var repos: [String] { runsByRepo.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending } }
@@ -133,6 +134,18 @@ final class AppState {
         }
         let merged = runsByRepo.merging(updates) { _, new in new }
         if merged != runsByRepo { runsByRepo = merged }
+    }
+
+    /// Notifies about runs that appeared since the last update and are queued or running.
+    private func announceStartedRuns(before old: [String: [WorkflowRun]]) {
+        // An empty `old` is the first load (or a new sign-in): those runs aren't news.
+        guard !old.isEmpty, defaults.bool(forKey: "notifyStartedRuns") else { return }
+        let known = Set(old.values.joined().map(\.id))
+        let started = runsByRepo.values.joined().filter { !known.contains($0.id) && $0.state.isActive }
+        for run in started {
+            post(id: "started-\(run.id)", title: "\(run.workflowName) started", subtitle: run.repo,
+                 body: "\(run.displayTitle) · \(run.branchName) · \(run.event)", url: run.htmlUrl)
+        }
     }
 
     /// Notifies about runs that were queued or running and have now completed.
