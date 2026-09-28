@@ -93,6 +93,7 @@ struct GeneralSettings: View {
     @AppStorage("lookbackDays") private var lookbackDays = 30
     @AppStorage("notifyFailures") private var notifyFailures = true
     @AppStorage("notifyInbox") private var notifyInbox = true
+    @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
 
     var body: some View {
         Form {
@@ -108,6 +109,9 @@ struct GeneralSettings: View {
             }
             Section {
                 Toggle("Notify about new GitHub notifications", isOn: $notifyInbox)
+                Toggle("Include activity on my own pull requests and issues", isOn: $notifyOwnActivity)
+                    .disabled(!notifyInbox)
+                    .padding(.leading, 20)
                 Toggle("Notify when a workflow starts failing", isOn: $notifyFailures)
             }
         }

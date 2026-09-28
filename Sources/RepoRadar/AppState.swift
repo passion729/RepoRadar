@@ -41,7 +41,7 @@ final class AppState {
     private var canNotify: Bool { Bundle.main.bundleIdentifier != nil }  // `swift run` has no bundle
 
     init() {
-        defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true])
+        defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false])
     }
 
     var repos: [String] { runsByRepo.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending } }
@@ -253,7 +253,9 @@ final class AppState {
         let unread = inbox.filter(\.unread)
         defer { knownUnread = Set(unread.map(\.id)) }
         guard let known = knownUnread, defaults.bool(forKey: "notifyInbox") else { return }
-        for item in unread where !known.contains(item.id) {
+        // Threads you started (reason "author") stay in the Inbox but don't pop up unless opted in.
+        let includeOwn = defaults.bool(forKey: "notifyOwnActivity")
+        for item in unread where !known.contains(item.id) && (includeOwn || item.reason != "author") {
             post(id: "inbox-\(item.id)", title: item.title, subtitle: "\(item.repo) · \(item.reasonLabel)", body: nil, url: item.webURL)
         }
     }
