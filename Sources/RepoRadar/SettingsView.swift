@@ -96,6 +96,7 @@ struct GeneralSettings: View {
     @AppStorage("notifyStartedRuns") private var notifyStartedRuns = true
     @AppStorage("notifyInbox") private var notifyInbox = true
     @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
+    @AppStorage("autoReadSeconds") private var autoReadSeconds = 3
 
     var body: some View {
         Form {
@@ -117,6 +118,14 @@ struct GeneralSettings: View {
                 Toggle("Notify when a workflow run starts", isOn: $notifyStartedRuns)
                 Toggle("Notify when a workflow run finishes", isOn: $notifyFinishedRuns)
                 Toggle("Notify when a workflow starts failing", isOn: $notifyFailures)
+            }
+            Section {
+                Picker("Mark as read after viewing", selection: $autoReadSeconds) {
+                    Text("Never").tag(0)
+                    ForEach([1, 2, 3, 5, 10, 30], id: \.self) { Text("\($0) sec").tag($0) }
+                }
+            } footer: {
+                Text("Read notifications, and failing workflows or review requests you've viewed, stop counting toward the badges until something new happens.")
             }
         }
         .formStyle(.grouped)

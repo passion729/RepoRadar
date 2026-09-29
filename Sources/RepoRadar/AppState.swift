@@ -25,6 +25,10 @@ final class AppState {
 
     private(set) var notifications: [GitHubNotification] = []
     private(set) var pulls: [PullItem] = []
+    /// `seenKey`s of runs and pull requests the user has viewed; those stop counting as needing attention.
+    private(set) var seen = Set(UserDefaults.standard.stringArray(forKey: "seenItems") ?? []) {
+        didSet { defaults.set(Array(seen), forKey: "seenItems") }
+    }
 
     // MARK: Account & status
 
@@ -52,9 +56,13 @@ final class AppState {
     }
 
     var repos: [String] { runsByRepo.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending } }
-    var failingCount: Int { latestRuns.count(where: { $0.state == .failure }) }
+    var failingCount: Int { latestRuns.count(where: needsAttention) }
     var unreadCount: Int { notifications.count(where: \.unread) }
-    var reviewRequestCount: Int { pulls.count(where: { $0.roles.contains(.reviewRequested) }) }
+    var reviewRequestCount: Int { pulls.count(where: needsAttention) }
+
+    /// A failure or review request that hasn't been viewed yet.
+    func needsAttention(_ run: WorkflowRun) -> Bool { run.state == .failure && !seen.contains(run.seenKey) }
+    func needsAttention(_ pull: PullItem) -> Bool { pull.roles.contains(.reviewRequested) && !seen.contains(pull.seenKey) }
 
     // MARK: - Refreshing
 
@@ -106,6 +114,8 @@ final class AppState {
             let (newRuns, newInbox, newPulls) = try await (runs, inbox, prs)
             runsByRepo = newRuns
             pulls = newPulls
+            let current = Set(newRuns.values.joined().map(\.seenKey) + newPulls.map(\.seenKey))
+            if !seen.isSubset(of: current) { seen.formIntersection(current) }  // forget items that are gone
             apply(newInbox)
             lastUpdated = Date()
             rateLimit = await client.rateLimit
@@ -207,10 +217,18 @@ final class AppState {
 
     // MARK: - Opening links
 
-    /// Opens items in the browser. Opening something also reads its inbox notification.
+    /// Opens items in the browser. Opening something also reads its inbox notification, or marks it seen.
     func open(_ urls: [URL]) {
         urls.forEach { NSWorkspace.shared.open($0) }
         markRead(notifications.filter { $0.unread && urls.contains($0.webURL) })
+        markSeen(runsByRepo.values.joined().filter { urls.contains($0.htmlUrl) }.map(\.seenKey)
+                 + pulls.filter { urls.contains($0.pr.htmlUrl) }.map(\.seenKey))
+    }
+
+    func markSeen(_ keys: [String]) {
+        guard !seen.isSuperset(of: keys) else { return }
+        seen.formUnion(keys)
+        publishBadge()
     }
 
     func copyLinks(_ urls: [URL]) {
@@ -303,6 +321,7 @@ final class AppState {
         runsByRepo = [:]
         notifications = []
         pulls = []
+        seen = []
         knownFailures = nil
         knownUnread = nil
         publishBadge()

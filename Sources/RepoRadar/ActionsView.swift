@@ -74,6 +74,9 @@ struct ActionsView: View {
         }
         .focusedSceneValue(\.selectedRuns, selectedRuns)
         .focusesTable(onChangeOf: selection)
+        .autoRead(selection, when: selectedRuns.count == 1 && state.needsAttention(selectedRuns[0])) {
+            state.markSeen(selectedRuns.map(\.seenKey))
+        }
 
         .focusedSceneValue(\.selectedURLs, selectedRuns.map(\.htmlUrl))
     }
@@ -140,9 +143,11 @@ struct RunTable: View {
             TableColumn("Workflow", value: \.workflowName)
                 .width(min: 90, ideal: 140)
                 .customizationID("workflow")
-            TableColumn("Title", value: \.displayTitle)
-                .width(min: 140, ideal: 320)
-                .customizationID("title")
+            TableColumn("Title", value: \.displayTitle) { run in
+                Text(run.displayTitle).fontWeight(state.needsAttention(run) ? .medium : .regular)
+            }
+            .width(min: 140, ideal: 320)
+            .customizationID("title")
             TableColumn("Repository", value: \.repo)
                 .width(min: 100, ideal: 180)
                 .customizationID("repository")

@@ -65,6 +65,7 @@ struct InboxView: View {
         }
         .focusedSceneValue(\.selectedNotifications, selectedItems)
         .focusesTable(onChangeOf: selection)
+        .autoRead(selection, when: selectedItems.count == 1 && selectedItems[0].unread) { state.markRead(selectedItems) }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.webURL))
     }
 

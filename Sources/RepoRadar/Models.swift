@@ -40,6 +40,8 @@ struct WorkflowRun: Decodable, Identifiable, Hashable {
     var branchName: String { headBranch ?? "—" }
     var actorName: String { actor?.login ?? "—" }
     var state: RunState { RunState(status: status, conclusion: conclusion) }
+    /// Changes when the run does (a re-run, or a run that finishes), so viewing it again is needed.
+    var seenKey: String { "run-\(id)-\(updatedAt.timeIntervalSince1970)" }
 
     var duration: TimeInterval {
         let end = state.isActive ? Date() : updatedAt
@@ -219,6 +221,8 @@ struct PullItem: Identifiable, Hashable {
     var isDraftRank: Int { pr.isDraft ? 1 : 0 }
     var number: Int { pr.number }
     var updatedAt: Date { pr.updatedAt }
+    /// Changes with any new activity on the pull request, so viewing it again is needed.
+    var seenKey: String { "pr-\(pr.id)-\(pr.updatedAt.timeIntervalSince1970)" }
     var rolesSummary: String { PRRole.allCases.filter(roles.contains).map(\.title).joined(separator: ", ") }
 }
 

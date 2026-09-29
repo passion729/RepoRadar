@@ -130,7 +130,8 @@ private struct PanelRow: Identifiable {
     let color: Color
     let date: Date
     let url: URL
-    var notification: GitHubNotification?
+    /// Marks a notification read, or a failure / review request seen.
+    var markRead: (() -> Void)?
 }
 
 struct MenuBarPanel: View {
@@ -238,7 +239,7 @@ struct MenuBarPanel: View {
                         PanelRowView(row: row, open: {
                             state.open([row.url])
                             controller.close()
-                        }, markRead: row.notification.map { note in { state.markRead([note]) } })
+                        }, markRead: row.markRead)
                     }
                 }
                 .padding(6)
@@ -254,22 +255,24 @@ struct MenuBarPanel: View {
         switch tab {
         case .failing, .running:
             let runs = state.latestRuns
-                .filter { tab == .failing ? $0.state == .failure : $0.state.isActive }
+                .filter { tab == .failing ? state.needsAttention($0) : $0.state.isActive }
                 .sorted { $0.createdAt > $1.createdAt }
             return runs.map { run in
                 PanelRow(id: "run-\(run.id)", title: run.workflowName, subtitle: "\(run.repo) · \(run.branchName)",
-                         symbol: run.state.symbol, color: tab.color, date: run.createdAt, url: run.htmlUrl)
+                         symbol: run.state.symbol, color: tab.color, date: run.createdAt, url: run.htmlUrl,
+                         markRead: tab == .failing ? { state.markSeen([run.seenKey]) } : nil)
             }
         case .reviews:
-            return state.pulls.filter { $0.roles.contains(.reviewRequested) }.sorted { $0.updatedAt > $1.updatedAt }.map { pull in
+            return state.pulls.filter(state.needsAttention).sorted { $0.updatedAt > $1.updatedAt }.map { pull in
                 PanelRow(id: "pr-\(pull.id)", title: pull.title, subtitle: "\(pull.repo) #\(pull.pr.number) · \(pull.author)",
-                         symbol: "arrow.triangle.pull", color: .purple, date: pull.updatedAt, url: pull.pr.htmlUrl)
+                         symbol: "arrow.triangle.pull", color: .purple, date: pull.updatedAt, url: pull.pr.htmlUrl,
+                         markRead: { state.markSeen([pull.seenKey]) })
             }
         case .unread:
             return state.notifications.filter(\.unread).map { note in
                 PanelRow(id: "n-\(note.id)", title: note.title, subtitle: "\(note.repo) · \(note.reasonLabel)",
                          symbol: note.symbol, color: note.subject.type == "CheckSuite" ? .red : .blue,
-                         date: note.updatedAt, url: note.webURL, notification: note)
+                         date: note.updatedAt, url: note.webURL, markRead: { state.markRead([note]) })
             }
         }
     }

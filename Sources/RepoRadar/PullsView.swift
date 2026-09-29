@@ -31,14 +31,18 @@ struct PullsView: View {
                 Button("Copy Link", systemImage: "link") { state.copyLinks(selectedItems.map(\.pr.htmlUrl)) }
                     .disabled(selectedItems.isEmpty)
             } stats: {
-                Label("\(state.reviewRequestCount) to review", systemImage: "eye")
-                    .foregroundStyle(state.reviewRequestCount > 0 ? AnyShapeStyle(.purple) : AnyShapeStyle(.secondary))
+                let toReview = state.pulls.count(where: { $0.roles.contains(.reviewRequested) })
+                Label("\(toReview) to review", systemImage: "eye")
+                    .foregroundStyle(toReview > 0 ? AnyShapeStyle(.purple) : AnyShapeStyle(.secondary))
                 Label("\(state.pulls.count) open", systemImage: "arrow.triangle.pull")
                 QuotaLabel()
             }
         }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.pr.htmlUrl))
         .focusesTable(onChangeOf: selection)
+        .autoRead(selection, when: selectedItems.count == 1 && state.needsAttention(selectedItems[0])) {
+            state.markSeen(selectedItems.map(\.seenKey))
+        }
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -92,7 +96,7 @@ struct PullTable: View {
                 .customizationID("number")
             TableColumn("Title", value: \.title) { item in
                 HStack(spacing: 6) {
-                    Text(item.title)
+                    Text(item.title).fontWeight(state.needsAttention(item) ? .medium : .regular)
                     if item.pr.isDraft { StatusPill(text: "Draft", color: .gray) }
                 }
             }
