@@ -48,6 +48,11 @@ final class MenuBarController: NSObject {
             statusItem.button?.imagePosition = .imageLeading
             statusItem.button?.title = attention > 0 ? " \(attention)" : ""
             statusItem.button?.setAccessibilityLabel(attention > 0 ? "RepoRadar, \(attention) items need attention" : "RepoRadar")
+            // The count changes the button's width; keep an open popover pointing at it.
+            if popover.isShown, let button = statusItem.button {
+                button.superview?.layoutSubtreeIfNeeded()
+                popover.positioningRect = button.bounds
+            }
         } onChange: { [weak self] in
             Task { @MainActor in self?.updateButton() }
         }
