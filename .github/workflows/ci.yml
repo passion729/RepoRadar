@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - run: ./test.sh
