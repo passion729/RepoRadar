@@ -1,0 +1,27 @@
+name: Release
+
+# Push a v* tag to publish RepoRadar.app as a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: blacksmith-6vcpu-macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh release
+      - run: ditto -c -k --keepParent RepoRadar.app "RepoRadar-$GITHUB_REF_NAME.zip"
+      - run: gh release create "$GITHUB_REF_NAME" "RepoRadar-$GITHUB_REF_NAME.zip" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
