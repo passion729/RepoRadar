@@ -21,7 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh release
-      - run: ditto -c -k --keepParent RepoRadar.app "RepoRadar-$GITHUB_REF_NAME.zip"
-      - run: gh release create "$GITHUB_REF_NAME" "RepoRadar-$GITHUB_REF_NAME.zip" --generate-notes
+      # Drag-to-install DMG: the app next to an Applications shortcut.
+      - run: |
+          mkdir dmg && mv RepoRadar.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname RepoRadar -srcfolder dmg -format UDZO "RepoRadar-$GITHUB_REF_NAME.dmg"
+      - run: gh release create "$GITHUB_REF_NAME" "RepoRadar-$GITHUB_REF_NAME.dmg" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
