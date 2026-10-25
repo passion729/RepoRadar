@@ -20,12 +20,7 @@ struct AccountSettings: View {
 
     var body: some View {
         Form {
-            if state.hasToken {
-                Section {
-                    LabeledContent("Signed in as", value: state.login.map { "@\($0)" } ?? "…")
-                    Button("Sign Out") { state.signOut() }
-                }
-            } else if let deviceCode {
+            if let deviceCode {
                 Section("Authorize in your browser") {
                     LabeledContent("Device code") {
                         Text(deviceCode.userCode)
@@ -39,6 +34,21 @@ struct AccountSettings: View {
                         .foregroundStyle(.secondary)
                     Button("Cancel") { loginTask?.cancel() }
                         .keyboardShortcut(.cancelAction)
+                }
+            } else if state.hasToken {
+                Section {
+                    LabeledContent("Signed in as", value: state.login.map { "@\($0)" } ?? "…")
+                    if let scopes = state.tokenScopes {
+                        LabeledContent("Permissions", value: scopes.isEmpty ? "—" : scopes.sorted().joined(separator: ", "))
+                    }
+                    Button("Sign Out") { state.signOut() }
+                }
+                if let scopes = state.tokenScopes, !scopes.contains("read:org"), !scopes.contains("admin:org") {
+                    Section {
+                        Button("Re-authorize with GitHub…") { startDeviceFlow() }
+                    } footer: {
+                        Text("This token can't read organization teams, so team reviewers are looked up one request at a time. Re-authorizing adds read:org (read-only). A personal access token needs read:org added on GitHub.")
+                    }
                 }
             } else {
                 Section {
@@ -58,7 +68,7 @@ struct AccountSettings: View {
                 } header: {
                     Text("Personal access token")
                 } footer: {
-                    Text("Needs the repo and notifications scopes.")
+                    Text("Needs the repo, notifications and read:org scopes.")
                 }
             }
             if let loginError {

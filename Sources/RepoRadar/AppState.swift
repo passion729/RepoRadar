@@ -92,6 +92,8 @@ final class AppState {
     private(set) var rateLimit: RateLimit?
     /// GitHub's requested notification poll interval, in seconds.
     private(set) var pollInterval: Int?
+    /// The token's OAuth scopes, once a response has reported them (fine-grained tokens report none).
+    private(set) var tokenScopes: Set<String>?
     private(set) var hasToken = Keychain.load() != nil
     var error: String?
     /// Why the last sync failed, if it did; cleared by the next successful one.
@@ -328,6 +330,7 @@ final class AppState {
             forgetHandledItems()
             lastUpdated = Date()
             rateLimit = await client.rateLimit
+            tokenScopes = await client.scopes
             error = nil
             failure = nil
             publishFailures()
@@ -825,6 +828,7 @@ final class AppState {
         Task { await client.resetCache() }
         hasToken = false
         login = nil
+        tokenScopes = nil
         error = nil
         failure = nil
         scopeRepo = nil

@@ -41,6 +41,13 @@ enum Keychain {
     ]
 
     static func save(_ token: String) {
+        #if DEBUG
+        // The dev token file wins over the Keychain in debug builds, so a new sign-in has to replace it too.
+        let devFile = NSHomeDirectory() + "/.reporadar-dev-token"
+        if FileManager.default.fileExists(atPath: devFile) {
+            try? token.write(toFile: devFile, atomically: true, encoding: .utf8)
+        }
+        #endif
         SecItemDelete(base as CFDictionary)
         var attributes = base
         attributes[kSecValueData as String] = Data(token.utf8)
@@ -78,6 +85,12 @@ actor GitHubClient {
     private(set) var rateLimit: RateLimit?
     /// Seconds GitHub asks to wait between notification polls (`X-Poll-Interval`).
     private(set) var pollInterval: Int?
+    /// The classic token's scopes (`X-OAuth-Scopes`); nil until a response says, and for fine-grained tokens,
+    /// which don't report any.
+    private(set) var scopes: Set<String>?
+
+    /// Whether the token can read team names (GraphQL needs read:org for them). Unknown counts as no.
+    var canReadOrgs: Bool { scopes?.contains("read:org") == true || scopes?.contains("admin:org") == true }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -85,7 +98,10 @@ actor GitHubClient {
         return decoder
     }()
 
-    func resetCache() { cache = [:] }
+    func resetCache() {
+        cache = [:]
+        scopes = nil
+    }
 
     @discardableResult
     private func send(_ path: String, query: [String: String] = [:], method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
@@ -112,6 +128,9 @@ actor GitHubClient {
         let (data, response) = try await URLSession.shared.data(for: request)
         if path == "/notifications", let interval = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Poll-Interval") {
             pollInterval = Int(interval)
+        }
+        if let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-OAuth-Scopes") {
+            scopes = Set(header.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
         }
         if let http = response as? HTTPURLResponse, http.value(forHTTPHeaderField: "X-RateLimit-Resource") == "core",
            let remaining = Int(http.value(forHTTPHeaderField: "X-RateLimit-Remaining") ?? ""),
@@ -319,7 +338,7 @@ actor GitHubClient {
         struct Count: Decodable { let totalCount: Int }
         struct Review: Decodable { let state: String; let author: Login? }
         struct Request: Decodable {
-            struct Reviewer: Decodable { let login: String? }
+            struct Reviewer: Decodable { let login: String?; let name: String? }
             let asCodeOwner: Bool
             let requestedReviewer: Reviewer?
         }
@@ -367,8 +386,9 @@ actor GitHubClient {
         }
         struct Result: Decodable { let repository: Repository }
         struct Teams: Decodable { struct Team: Decodable { let name: String }; let teams: [Team] }
-        // Team names in GraphQL need the read:org scope, which a repo + notifications token lacks; REST has them.
-        async let teams: Teams? = try? get("/repos/\(ref.repo)/pulls/\(ref.number)/requested_reviewers")
+        // Team names in GraphQL need read:org. Older tokens without it get them from REST instead.
+        let withTeams = canReadOrgs
+        async let teams: Teams? = withTeams ? nil : try? get("/repos/\(ref.repo)/pulls/\(ref.number)/requested_reviewers")
         let parts = ref.repo.split(separator: "/")
         let result: Result = try await graphQL("""
         query {
@@ -381,7 +401,8 @@ actor GitHubClient {
               closingIssuesReferences(first: 3) { nodes { number repository { name } } }
               autoMergeRequest { enabledBy { login } }
               latestReviews(first: 30) { nodes { state author { login } } }
-              reviewRequests(first: 30) { nodes { asCodeOwner requestedReviewer { ... on User { login } ... on Bot { login } } } }
+              reviewRequests(first: 30) { nodes { asCodeOwner requestedReviewer {
+                ... on User { login } ... on Bot { login }\(withTeams ? " ... on Team { name }" : "") } } }
               files(first: 100) { nodes { path additions deletions viewerViewedState } }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
                 ... on CheckRun { name status conclusion startedAt completedAt databaseId detailsUrl
@@ -403,7 +424,8 @@ actor GitHubClient {
             if let login = request.requestedReviewer?.login {
                 return PullSummary.Reviewer(name: login, isTeam: false, state: .requested, isCodeOwner: request.asCodeOwner)
             }
-            return PullSummary.Reviewer(name: teamNames?.next() ?? "A team", isTeam: true, state: .requested, isCodeOwner: request.asCodeOwner)
+            let team = request.requestedReviewer?.name.map { "@" + $0 } ?? teamNames?.next() ?? "A team"
+            return PullSummary.Reviewer(name: team, isTeam: true, state: .requested, isCodeOwner: request.asCodeOwner)
         }
         for review in pull.latestReviews.nodes {
             guard let name = review.author?.login, !reviewers.contains(where: { $0.name == name }) else { continue }
@@ -626,7 +648,9 @@ struct DeviceCode: Decodable {
 enum DeviceFlow {
     // Public client_id carried over from the original RepoRadar; swap in your own OAuth App's id if you like.
     static let clientID = "Ov23liBIfzKlrQskIuWA"
-    static let scopes = "repo notifications"
+    /// repo: private repositories, Actions, reviews and merging; notifications: the inbox;
+    /// read:org: team names of requested reviewers (read-only).
+    static let scopes = "repo notifications read:org"
 
     private struct PollResponse: Decodable {
         let accessToken: String?

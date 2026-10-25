@@ -53,7 +53,7 @@ open RepoRadar.app
 Open **Settings (⌘,) → Account** and either:
 
 - **Sign in with GitHub**: uses the OAuth device flow. The code is copied for you and github.com opens to approve it. No password or client secret is involved.
-- **Paste a personal access token** with the `repo` and `notifications` scopes.
+- **Paste a personal access token** with the `repo`, `notifications` and `read:org` scopes (`read:org` is read-only and lets pull requests show team reviewers).
 
 The token is stored in the macOS Keychain. Debug builds also read `REPORADAR_TOKEN` or `~/.reporadar-dev-token`, so rebuilding doesn't trigger Keychain prompts.
 
