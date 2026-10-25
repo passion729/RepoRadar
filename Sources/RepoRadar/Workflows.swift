@@ -77,11 +77,13 @@ enum Workflows {
 
     /// Every workflow with runs, grouped: Needs attention (default branch failing, or a deployment waiting for
     /// review), Running, Passing; newest first within a group.
-    static func summaries(_ runsByRepo: [String: [WorkflowRun]], defaultBranches: [String: String]) -> [WorkflowSummary] {
+    /// Disabled workflows are left out (A2).
+    static func summaries(_ runsByRepo: [String: [WorkflowRun]], defaultBranches: [String: String],
+                          disabled: Set<String> = []) -> [WorkflowSummary] {
         var result: [WorkflowSummary] = []
         for (repo, runs) in runsByRepo {
             let branch = defaultBranches[repo]
-            for (id, workflowRuns) in Dictionary(grouping: runs, by: \.workflowId) {
+            for (id, workflowRuns) in Dictionary(grouping: runs, by: \.workflowId) where !disabled.contains(key(repo: repo, workflowId: id)) {
                 let newestFirst = workflowRuns.sorted { $0.createdAt > $1.createdAt }
                 let latest = newestFirst[0]
                 let latestDefault = newestFirst.first { branch == nil || $0.headBranch == branch }

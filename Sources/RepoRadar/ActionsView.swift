@@ -15,7 +15,8 @@ struct ActionsView: View {
     @FocusState private var isListFocused: Bool
 
     private var scoped: [WorkflowSummary] {
-        Workflows.summaries(state.runsByRepo, defaultBranches: state.defaultBranches).filter { state.inScope($0.repo) }
+        Workflows.summaries(state.runsByRepo, defaultBranches: state.defaultBranches, disabled: state.disabledWorkflows)
+            .filter { state.inScope($0.repo) }
     }
 
     var body: some View {

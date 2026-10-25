@@ -40,6 +40,9 @@ private func run(_ id: Int, workflow: Int, branch: String = "main", status: Stri
     #expect(summaries.filter(RunFilter.failing.matches).map(\.workflowId) == [1])
     #expect(summaries.filter(RunFilter.running.matches).map(\.workflowId) == [2])
     #expect(summaries.filter(RunFilter.waiting.matches).map(\.workflowId) == [3])
+    // A workflow turned off on GitHub doesn't show.
+    let withoutW4 = Workflows.summaries(["o/r": runs], defaultBranches: ["o/r": "main"], disabled: [Workflows.key(repo: "o/r", workflowId: 4)])
+    #expect(withoutW4.map(\.workflowId) == [3, 1, 2])
 }
 
 private let sampleLog = """

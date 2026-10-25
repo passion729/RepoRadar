@@ -190,6 +190,17 @@ actor GitHubClient {
         return page.workflowRuns
     }
 
+    /// Ids of a repository's workflows that are turned off: `disabled_manually`, `disabled_inactivity`,
+    /// `disabled_fork`. Needs only the repo scope.
+    func disabledWorkflows(of repo: String) async throws -> [Int] {
+        struct Page: Decodable {
+            struct Workflow: Decodable { let id: Int; let state: String }
+            let workflows: [Workflow]
+        }
+        let page: Page = try await get("/repos/\(repo)/actions/workflows", query: ["per_page": "100"])
+        return page.workflows.filter { $0.state != "active" }.map(\.id)
+    }
+
     /// One workflow's latest runs, on a branch if given (the run cells and pass rate use the default branch).
     func runs(ofWorkflow id: Int, repo: String, branch: String?, count: Int = 20) async throws -> [WorkflowRun] {
         var query = ["per_page": "\(count)"]

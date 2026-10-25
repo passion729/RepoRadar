@@ -20,6 +20,8 @@ final class AppState {
     private(set) var latestRuns: [WorkflowRun] = []
     /// Runs awaiting the user's confirmation before they're cancelled.
     var pendingCancel: [WorkflowRun] = []
+    /// Workflows turned off on GitHub (by hand, for inactivity or in a fork), keyed by `Workflows.key`.
+    private(set) var disabledWorkflows: Set<String> = []
     /// Each workflow's last 20 default-branch runs (oldest first), keyed by `Workflows.key`; loaded as rows appear.
     private(set) var workflowHistory: [String: [WorkflowRun]] = [:]
 
@@ -333,8 +335,9 @@ final class AppState {
             async let runs = fetchRuns()
             async let inbox = client.notifications()
             async let prs = fetchPulls()
-            let ((newRuns, branches), newInbox, newPulls) = try await (runs, inbox, prs)
+            let ((newRuns, branches, disabled), newInbox, newPulls) = try await (runs, inbox, prs)
             defaultBranches = branches
+            disabledWorkflows = disabled
             runsByRepo = newRuns.filter { !isExcluded($0.key) }
             pendingDeployments = await fetchPendingDeployments()
             allPulls = newPulls.filter { !isExcluded($0.repo) }
@@ -459,24 +462,34 @@ final class AppState {
     }
 
     /// Runs per repository, and each repository's default branch.
-    private func fetchRuns() async throws -> ([String: [WorkflowRun]], [String: String]) {
+    /// Runs per repository, each repository's default branch, and the workflows turned off (`Workflows.key`).
+    private func fetchRuns() async throws -> ([String: [WorkflowRun]], [String: String], Set<String>) {
         let days = max(1, defaults.integer(forKey: "lookbackDays"))
         let repos = try await client.repos(pushedSince: Date().addingTimeInterval(-Double(days) * 86_400))
             .filter { !isExcluded($0.fullName) }  // excluded repositories cost no requests
         let branches = Dictionary(repos.compactMap { repo in repo.defaultBranch.map { (repo.fullName, $0) } },
                                   uniquingKeysWith: { first, _ in first })
         var result: [String: [WorkflowRun]] = [:]
+        var disabled: Set<String> = []
         // ponytail: fixed batches of 8 concurrent requests; use a sliding window if hundreds of repos make this slow
         for start in stride(from: 0, to: repos.count, by: 8) {
-            await withTaskGroup(of: (String, [WorkflowRun]).self) { group in
+            await withTaskGroup(of: (String, [WorkflowRun], [Int]).self) { group in
                 for repo in repos[start..<min(start + 8, repos.count)] {
-                    // Per-repo failures (Actions disabled, no access…) just mean "no runs".
-                    group.addTask { [client] in (repo.fullName, (try? await client.runs(of: repo.fullName)) ?? []) }
+                    group.addTask { [client] in
+                        // Per-repo failures (Actions disabled, no access…) just mean "no runs".
+                        let runs = (try? await client.runs(of: repo.fullName)) ?? []
+                        // Only repositories with runs need their workflows' states (an unchanged list is a free 304).
+                        let off = runs.isEmpty ? [] : (try? await client.disabledWorkflows(of: repo.fullName)) ?? []
+                        return (repo.fullName, runs, off)
+                    }
                 }
-                for await (name, runs) in group where !runs.isEmpty { result[name] = runs }
+                for await (name, runs, off) in group where !runs.isEmpty {
+                    result[name] = runs
+                    disabled.formUnion(off.map { Workflows.key(repo: name, workflowId: $0) })
+                }
             }
         }
-        return (result, branches)
+        return (result, branches, disabled)
     }
 
     /// One search per role, merged so a PR you authored and were mentioned on appears once with both roles,
