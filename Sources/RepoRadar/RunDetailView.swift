@@ -98,13 +98,15 @@ private struct RunHeader: View {
                     Label { HStack(spacing: 6) { Text("Re-run failed"); Kbd("⇧⌘R") } } icon: { Image(systemName: "arrow.clockwise") }
                 }
                 .buttonStyle(.primary)
+                .requiresPermission(state.writeBlockedReason)
             }
             Button { state.rerunAllJobs([run]) } label: { HStack(spacing: 6) { Text("Re-run all"); Kbd("⌥⌘R") } }
                 .buttonStyle(.secondary)
                 .disabled(run.state.isActive)
+                .requiresPermission(state.writeBlockedReason)
             Menu {
                 Button("Cancel Run…", systemImage: "stop.circle") { state.requestCancel([run]) }
-                    .disabled(!run.state.isActive)
+                    .disabled(!run.state.isActive || state.writeBlockedReason != nil)
                 Divider()
                 Button("Copy Link", systemImage: "link") { state.copyLinks([run.htmlUrl]) }
                 Button("Open on GitHub", systemImage: "safari") { state.open([run.htmlUrl]) }
@@ -239,6 +241,7 @@ struct JobLogPanel: View {
                 .controlSize(.small)
                 .disabled(job.state.isActive)
                 .help("Re-run this job and the jobs that depend on it")
+                .requiresPermission(state.writeBlockedReason)
         }
     }
 
@@ -254,7 +257,14 @@ struct JobLogPanel: View {
                 failures = JobLog.failures(annotations: annotations, lines: lines)
                 message = nil
             } catch {
-                message = job.state.isActive ? "The log appears as the job runs." : ((error as? GitHubError)?.message ?? error.localizedDescription)
+                if job.state.isActive {
+                    message = "The log appears as the job runs."
+                } else if let ended = job.completedAt, ended < .now.addingTimeInterval(-90 * 86_400) {
+                    // GitHub answers an expired log with a bare "Server Error".
+                    message = "This log has expired. GitHub keeps logs for 90 days unless the repository sets otherwise."
+                } else {
+                    message = (error as? GitHubError)?.message ?? error.localizedDescription
+                }
             }
             guard job.state.isActive else { return }
             try? await Task.sleep(for: .seconds(5))  // follow a running job's tail

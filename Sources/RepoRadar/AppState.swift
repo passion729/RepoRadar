@@ -156,6 +156,26 @@ final class AppState {
     var unreadCount: Int { notifications.count(where: \.unread) }
     var reviewRequestCount: Int { pulls.count(where: needsAttention) }
 
+    /// Why reviews, merges, re-runs and comments are greyed out (G1), or nil when the token may write — or when
+    /// it can't be known: fine-grained tokens don't report scopes, and GitHub's refusal then shows in the toast.
+    var writeBlockedReason: String? { Self.missingScope(for: .write, in: tokenScopes) }
+    /// The same for marking threads read, done or muted.
+    var inboxBlockedReason: String? { Self.missingScope(for: .inbox, in: tokenScopes) }
+
+    enum Permission { case write, inbox }
+
+    nonisolated static func missingScope(for permission: Permission, in scopes: Set<String>?) -> String? {
+        guard let scopes, !scopes.isEmpty else { return nil }
+        switch permission {
+        case .write where !scopes.contains("repo"):
+            return "Your GitHub token lacks the repo scope, which reviews, merges, re-runs and comments need. Re-authorize in Settings ▸ Account."
+        case .inbox where !scopes.contains("notifications") && !scopes.contains("repo"):
+            return "Your GitHub token lacks the notifications scope, which marking threads read or done needs. Re-authorize in Settings ▸ Account."
+        default:
+            return nil
+        }
+    }
+
     var syncStatus: SyncStatus {
         SyncStatus(hasToken: hasToken, isRefreshing: isRefreshing, failure: failure, rateLimit: rateLimit)
     }

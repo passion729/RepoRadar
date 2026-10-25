@@ -76,6 +76,25 @@ private struct ButtonLabelStyle: LabelStyle {
     }
 }
 
+extension View {
+    /// Greys out controls the token isn't allowed to use, and says which scope is missing (G1).
+    func requiresPermission(_ reason: String?) -> some View {
+        modifier(PermissionGate(reason: reason))
+    }
+}
+
+private struct PermissionGate: ViewModifier {
+    let reason: String?
+
+    func body(content: Content) -> some View {
+        if let reason {
+            content.disabled(true).help(reason)
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - Icon buttons
 
 /// Round, icon-only button: 32 pt alone, 28 pt inside an `IconButtonGroup`.

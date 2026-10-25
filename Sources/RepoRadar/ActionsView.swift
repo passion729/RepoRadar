@@ -114,6 +114,13 @@ struct ActionsView: View {
             .focused($isListFocused)
             .focusEffectDisabled()
             .onKeyPress(phases: .down) { handleKey($0, order: workflows.map(\.id)) }
+            .focusedValue(\.listCommands, isListFocused ? ListCommands(move: { delta in
+                let order = workflows.map(\.id)
+                guard !order.isEmpty else { return }
+                let index = selection.flatMap(order.firstIndex) ?? -1
+                selection = order[min(max(index + delta, 0), order.count - 1)]
+                pickedRun = nil
+            }) : nil)
         }
     }
 

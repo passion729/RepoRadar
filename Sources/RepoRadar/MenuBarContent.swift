@@ -148,6 +148,7 @@ struct MenuBarPanel: View {
             TimelineView(.periodic(from: .now, by: 5)) { _ in
                 Text(status).textStyle(.meta).foregroundStyle(Theme.Ink.secondary).lineLimit(1)
             }
+            .help(state.rateLimit.map { "\($0.remaining.formatted()) API calls left this hour" } ?? "")
             Spacer()
             Button("Settings", systemImage: "gearshape") { controller.openSettings() }
                 .buttonStyle(IconButtonStyle(diameter: 28))
@@ -155,16 +156,11 @@ struct MenuBarPanel: View {
         }
     }
 
+    /// Sync state only; the quota is in the tooltip and the main window's sidebar.
     private var status: String {
-        var parts: [String] = []
-        switch state.syncStatus {
-        case .live:
-            let age = state.lastUpdated?.shortAge()
-            parts.append(age.map { $0 == "now" ? "synced just now" : "synced \($0) ago" } ?? "Live")
-        case let other: parts.append(other.title)
-        }
-        if let limit = state.rateLimit { parts.append("\(limit.remaining.formatted()) calls left") }
-        return parts.joined(separator: " · ")
+        guard case .live = state.syncStatus else { return state.syncStatus.title }
+        guard let age = state.lastUpdated?.shortAge() else { return "Live" }
+        return age == "now" ? "synced just now" : "synced \(age) ago"
     }
 
     private var tiles: some View {
@@ -269,12 +265,14 @@ struct MenuBarPanel: View {
             .keyboardShortcut("0")
             if state.alertsPaused, let until = state.alertsPausedUntil {
                 Button { state.resumeAlerts() } label: {
-                    Text("Resume alerts (paused until \(until.formatted(date: .omitted, time: .shortened)))").frame(maxWidth: .infinity)
+                    Text("Resume alerts").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.secondary)
+                .help("Alerts are paused until \(until.formatted(date: .omitted, time: .shortened))")
             } else {
-                Button { state.pauseAlerts(for: 3600) } label: { Text("Pause alerts for 1 hour").frame(maxWidth: .infinity) }
+                Button { state.pauseAlerts(for: 3600) } label: { Text("Pause for 1 hour").frame(maxWidth: .infinity) }
                     .buttonStyle(.secondary)
+                    .help("Pause alerts for 1 hour")
             }
         }
     }
@@ -314,7 +312,10 @@ private struct PanelQueueRow: View {
         .contentShape(.rect)
         .onTapGesture { controller.show(.now, select: .queueItem(item.id)) }
         .onHover { isHovered = $0 }
+        .requiresPermission(action.inPanel ? state.writeBlockedReason : nil)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default) { controller.show(.now, select: .queueItem(item.id)) }
         .accessibilityAction(named: action.title, perform)
     }
 
@@ -406,6 +407,7 @@ private struct PanelRunRow: View {
         .onTapGesture(perform: open)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default, open)
     }
 
     private func left(_ usual: TimeInterval) -> String {

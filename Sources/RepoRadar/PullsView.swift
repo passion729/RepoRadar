@@ -69,6 +69,7 @@ struct PullsView: View {
                     .focused($isListFocused)
                     .focusEffectDisabled()
                     .onKeyPress(phases: .down) { handleKey($0, items: items) }
+                    .focusedValue(\.listCommands, isListFocused ? commands(items) : nil)
                 }
                 Rectangle().fill(Theme.separator).frame(height: 1)
                 legend
@@ -145,6 +146,17 @@ struct PullsView: View {
     private func select(_ id: Int) {
         selections[list] = id
         isListFocused = true
+    }
+
+    private func commands(_ items: [PullItem]) -> ListCommands {
+        ListCommands(move: { delta in
+            guard !items.isEmpty else { return }
+            let index = selection.flatMap { id in items.firstIndex { $0.id == id } } ?? -1
+            selections[list] = items[min(max(index + delta, 0), items.count - 1)].id
+        }, primary: {
+            guard let pull = items.first(where: { $0.id == selection }), !pull.roles.contains(.authored) else { return }
+            state.review(pull, .approve)
+        })
     }
 
     private func handleKey(_ press: KeyPress, items: [PullItem]) -> KeyPress.Result {

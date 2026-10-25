@@ -256,6 +256,7 @@ private struct RunningRow: View {
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default) { state.navigate(to: .actions, select: .run(run.id)) }
         .accessibilityAction(named: "Cancel Run") { state.requestCancel([run]) }
         .task(id: run.id) {
             // Jobs move on without the run changing, so poll them while the row is visible.

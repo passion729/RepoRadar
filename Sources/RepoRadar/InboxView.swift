@@ -102,6 +102,7 @@ struct InboxView: View {
                     .focused($isListFocused)
                     .focusEffectDisabled()
                     .onKeyPress(phases: .down) { handleKey($0, order: order(sections)) }
+                    .focusedValue(\.listCommands, isListFocused ? commands(order(sections)) : nil)
                     .onChange(of: selection) { _, id in
                         guard let id else { return }
                         withAnimation(.snappy) { proxy.scrollTo(id) }
@@ -229,13 +230,22 @@ struct InboxView: View {
         state.markAllRead(visible, wholeInbox: whole)
     }
 
+    private func move(_ delta: Int, in order: [String]) {
+        guard !order.isEmpty else { return }
+        let index = selection.flatMap(order.firstIndex) ?? -1
+        selection = order[min(max(index + delta, 0), order.count - 1)]
+    }
+
+    private func commands(_ order: [String]) -> ListCommands {
+        ListCommands(move: { move($0, in: order) },
+                     done: { state.markDone(selectedThreads) },
+                     snooze: { snoozing = selection },
+                     mute: { state.mute(selectedThreads) })
+    }
+
     private func handleKey(_ press: KeyPress, order: [String]) -> KeyPress.Result {
         guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return .ignored }
-        func move(_ delta: Int) {
-            guard !order.isEmpty else { return }
-            let index = selection.flatMap(order.firstIndex) ?? -1
-            selection = order[min(max(index + delta, 0), order.count - 1)]
-        }
+        func move(_ delta: Int) { self.move(delta, in: order) }
         switch press.key {
         case .downArrow: move(1); return .handled
         case .upArrow: move(-1); return .handled

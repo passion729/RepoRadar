@@ -36,7 +36,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.selectedNotifications) private var selectedNotifications
     @FocusedBinding(\.page) private var page
     @FocusedBinding(\.inspector) private var inspector
-    @FocusedValue(\.queueCommands) private var queue
+    @FocusedValue(\.listCommands) private var list
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -91,21 +91,19 @@ struct AppCommands: Commands {
             Divider()
         }
 
-        // The Now queue's keys. Single letters work only while the queue has focus (never in a text field).
-        CommandMenu("Queue") {
-            Group {
-                Button("Next Item") { queue?.move(1) }.keyboardShortcut("j", modifiers: [])
-                Button("Previous Item") { queue?.move(-1) }.keyboardShortcut("k", modifiers: [])
-                Button("Expand or Collapse") { queue?.toggle() }.keyboardShortcut(.return, modifiers: [])
-                Divider()
-                Button("Approve") { queue?.primary() }.keyboardShortcut("a", modifiers: [])
-                Button("Re-run Failed Jobs") { queue?.primary() }.keyboardShortcut("r", modifiers: [])
-                Button("Squash and Merge") { queue?.merge() }.keyboardShortcut("m", modifiers: [.command, .shift])
-                Divider()
-                Button("Done") { queue?.done() }.keyboardShortcut("e", modifiers: [])
-                Button("Snooze…") { queue?.snooze() }.keyboardShortcut("s", modifiers: [])
-            }
-            .disabled(queue == nil)
+        // Every list's keys. Single letters work only while a list has focus (never in a text field).
+        CommandMenu("List") {
+            Button("Next Item") { list?.move(1) }.keyboardShortcut("j", modifiers: []).disabled(list == nil)
+            Button("Previous Item") { list?.move(-1) }.keyboardShortcut("k", modifiers: []).disabled(list == nil)
+            Button("Expand or Collapse") { list?.toggle?() }.keyboardShortcut(.return, modifiers: []).disabled(list?.toggle == nil)
+            Divider()
+            Button("Approve") { list?.primary?() }.keyboardShortcut("a", modifiers: []).disabled(list?.primary == nil)
+            Button("Re-run Failed Jobs") { list?.primary?() }.keyboardShortcut("r", modifiers: []).disabled(list?.primary == nil)
+            Button("Squash and Merge") { list?.merge?() }.keyboardShortcut("m", modifiers: [.command, .shift]).disabled(list?.merge == nil)
+            Divider()
+            Button("Done") { list?.done?() }.keyboardShortcut("e", modifiers: []).disabled(list?.done == nil)
+            Button("Snooze…") { list?.snooze?() }.keyboardShortcut("s", modifiers: []).disabled(list?.snooze == nil)
+            Button("Mute Thread") { list?.mute?() }.keyboardShortcut("m", modifiers: []).disabled(list?.mute == nil)
         }
 
         CommandMenu("Notification") {

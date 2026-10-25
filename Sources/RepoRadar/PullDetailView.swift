@@ -22,6 +22,7 @@ struct PullDetailView: View {
             header
             if let summary {
                 ReadinessBar(pull: pull, summary: summary)
+                    .requiresPermission(state.writeBlockedReason)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
                 tabBar(summary)
@@ -36,7 +37,7 @@ struct PullDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .bottom) {
-            if summary != nil { reviewBar }
+            if summary != nil { reviewBar.requiresPermission(state.writeBlockedReason) }
         }
         .task(id: "\(pull.pr.updatedAt.timeIntervalSince1970)-\(state.timelineVersion)") { await load() }
     }
@@ -90,6 +91,7 @@ struct PullDetailView: View {
                     }
                     .buttonStyle(.primary)
                     .help("Approve (A), with the summary below if you wrote one")
+                    .requiresPermission(state.writeBlockedReason)
                 }
             }
         }
@@ -197,7 +199,7 @@ struct PullDetailView: View {
         .padding(.leading, 16)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .glassEffect(.regular.tint(Theme.Surface.raised.opacity(0.75)), in: .rect(cornerRadius: 18))
         .padding(14)
     }
 

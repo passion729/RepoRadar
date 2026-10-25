@@ -43,6 +43,7 @@ struct ThreadView: View {
                 Button("Mute thread") { state.mute([thread]) }
                     .buttonStyle(.secondary)
                     .help("Unsubscribe: new activity stays out of the Inbox")
+                    .requiresPermission(state.inboxBlockedReason)
                 Button { state.markDone([thread]) } label: { HStack(spacing: 6) { Text("Done"); Kbd("E") } }
                     .buttonStyle(.primary)
                     .help("Done (E)")
@@ -109,6 +110,7 @@ struct ThreadView: View {
             .overlay(alignment: .bottom) {
                 ReplyBox(thread: thread, ref: ref,
                          canClose: !ref.isPullRequest && issue.state == "open" && canTriage)
+                    .requiresPermission(state.writeBlockedReason)
             }
             .onAppear {
                 if let firstUnread { proxy.scrollTo(firstUnread, anchor: .top) }
@@ -457,7 +459,7 @@ private struct ReplyBox: View {
             }
         }
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .glassEffect(.regular.tint(Theme.Surface.raised.opacity(0.75)), in: .rect(cornerRadius: 18))
         .padding(14)
         .onAppear { text = state.drafts[thread.id] ?? "" }
         .onChange(of: text) { _, new in

@@ -25,22 +25,24 @@ enum QueueFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// The queue's keyboard actions, published while the list has focus so the Queue menu can list them.
-struct QueueCommands {
-    let move: (Int) -> Void
-    let toggle: () -> Void
-    let done: () -> Void
-    let snooze: () -> Void
-    let primary: () -> Void
-    let merge: () -> Void
+/// A list's keyboard actions, published while the list has focus so the List menu can show them (spec §8).
+/// A list leaves out what it can't do; those menu items stay disabled.
+struct ListCommands {
+    var move: (Int) -> Void
+    var toggle: (() -> Void)?
+    var done: (() -> Void)?
+    var snooze: (() -> Void)?
+    var primary: (() -> Void)?
+    var merge: (() -> Void)?
+    var mute: (() -> Void)?
 }
 
-private struct QueueCommandsKey: FocusedValueKey { typealias Value = QueueCommands }
+private struct ListCommandsKey: FocusedValueKey { typealias Value = ListCommands }
 
 extension FocusedValues {
-    var queueCommands: QueueCommands? {
-        get { self[QueueCommandsKey.self] }
-        set { self[QueueCommandsKey.self] = newValue }
+    var listCommands: ListCommands? {
+        get { self[ListCommandsKey.self] }
+        set { self[ListCommandsKey.self] = newValue }
     }
 }
 
@@ -123,7 +125,7 @@ struct QueuePane: View {
             .focused($isListFocused)
             .focusEffectDisabled()
             .onKeyPress(phases: .down) { press in handleKey(press, items: items) }
-            .focusedValue(\.queueCommands, isListFocused ? commands(items) : nil)
+            .focusedValue(\.listCommands, isListFocused ? commands(items) : nil)
             .onChange(of: selection) { _, id in
                 guard let id else { return }
                 withAnimation(.snappy) { proxy.scrollTo(id) }
@@ -181,8 +183,8 @@ struct QueuePane: View {
         isExpanded = true
     }
 
-    private func commands(_ items: [NeedsYouItem]) -> QueueCommands {
-        QueueCommands(move: { move($0, in: items) },
+    private func commands(_ items: [NeedsYouItem]) -> ListCommands {
+        ListCommands(move: { move($0, in: items) },
                       toggle: { isExpanded.toggle() },
                       done: { run(.done) },
                       snooze: { snoozing = selection },
@@ -397,6 +399,7 @@ private struct QueueDetail: View {
                 MentionBlock(note: note, item: item, trailing: trailing, trigger: trigger, handled: handled)
             }
         }
+        .requiresPermission(state.writeBlockedReason)
         .onChange(of: trigger) { _, key in
             if key == .done { done() }
         }
