@@ -54,7 +54,7 @@ struct MainView: View {
         } detail: {
             content
                 .navigationTitle(page.title)
-                .toolbar { toolbar }
+                .toolbar { scopeTag }
         }
         .toasts(state.toasts)
         .onChange(of: page) { search = "" }
@@ -71,10 +71,10 @@ struct MainView: View {
         if state.hasToken {
             Group {
                 switch page {
-                case .now: NowView()
-                case .inbox: InboxView(search: search)
-                case .pulls: PullsView(search: search)
-                case .actions: ActionsView(search: search)
+                case .now: NowView(toolbar: standardToolbar)
+                case .inbox: InboxView(search: search, toolbar: standardToolbar)
+                case .pulls: PullsView(search: search, toolbar: standardToolbar)
+                case .actions: ActionsView(search: search, toolbar: standardToolbar)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -102,35 +102,46 @@ struct MainView: View {
             }
         } else {
             SignInPrompt()
+                .toolbar { standardToolbar }
         }
     }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+    @ToolbarContentBuilder private var scopeTag: some ToolbarContent {
         if let repo = state.scopeRepo {
             ToolbarItem(placement: .navigation) {
                 ScopeTag(repo: repo) { state.scopeRepo = nil }
             }
             .sharedBackgroundVisibility(.hidden)
         }
-        ToolbarItem(placement: .primaryAction) {
+    }
+
+    /// Search and the global buttons. Pages add it after their own items, so page actions sit to the left.
+    private var standardToolbar: StandardToolbar {
+        StandardToolbar(search: AnyView(
             SearchField(prompt: SearchField.toolbarPrompt, text: $search,
                         onFocusChange: { focused in
                             // Let a click on a result land before the list goes away.
                             if focused { isSearching = true } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { isSearching = false } }
                         },
                         onKey: handleJumpKey)
-                .frame(width: 280)
-        }
-        .sharedBackgroundVisibility(.hidden)
+                .frame(width: 280)))
+    }
+}
+
+/// The toolbar every page ends with: search, Refresh · Filter · Notifications, and the account.
+struct StandardToolbar: ToolbarContent {
+    let search: AnyView
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) { search }
+            .sharedBackgroundVisibility(.hidden)
         ToolbarItemGroup(placement: .primaryAction) {
             RefreshButton()
             RepoFilterButton()
             AlertSettingsButton()
         }
-        ToolbarItem(placement: .primaryAction) {
-            AccountButton()
-        }
-        .sharedBackgroundVisibility(.hidden)
+        ToolbarItem(placement: .primaryAction) { AccountButton() }
+            .sharedBackgroundVisibility(.hidden)
     }
 }
 

@@ -37,6 +37,7 @@ enum RunFilter: String, CaseIterable, Identifiable {
 struct ActionsView: View {
     @Environment(AppState.self) private var state
     let search: String
+    let toolbar: StandardToolbar
     @SceneStorage("runFilter") private var filter: RunFilter = .all
     @SceneStorage("workflowListWidth") private var listWidth = 360.0
     @State private var selection: Set<WorkflowRun.ID> = []
@@ -45,11 +46,13 @@ struct ActionsView: View {
     var body: some View {
         SplitPane(size: $listWidth, range: 300...560, minFlexible: 400) {
             VStack(spacing: 0) {
-                Segmented(selection: $filter, segments: RunFilter.allCases.map { option in
-                    Segment(value: option, title: option.title, count: scopedRuns.count(where: option.matches), status: option.status)
-                })
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollView(.horizontal) {
+                    Segmented(selection: $filter, segments: RunFilter.allCases.map { option in
+                        Segment(value: option, title: option.title, count: scopedRuns.count(where: option.matches), status: option.status)
+                    })
+                    .padding(12)
+                }
+                .scrollIndicators(.never)
                 RunTable(runs: visibleRuns, selection: $selection, sortOrder: $sortOrder)
                     .overlay { if visibleRuns.isEmpty { emptyState } }
             }
@@ -60,6 +63,7 @@ struct ActionsView: View {
                 DetailPlaceholder()
             }
         }
+        .toolbar { toolbar }
         .onChange(of: state.requestedSelection, initial: true) {
             guard case .run(let id)? = state.requestedSelection else { return }
             if !scopedRuns.contains(where: { $0.id == id }) { filter = .all }

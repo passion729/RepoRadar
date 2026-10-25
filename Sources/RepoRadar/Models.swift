@@ -290,6 +290,7 @@ struct IssueDetail: Decodable, Hashable {
     let htmlUrl: URL
     let draft: Bool?
     let pullRequest: PullLink?
+    var comments: Int?
 
     var stateLabel: String {
         if pullRequest?.mergedAt != nil { return "Merged" }
@@ -354,6 +355,46 @@ struct Annotation: Decodable, Hashable {
     let message: String
 }
 
+/// One entry of an issue or pull request timeline (GET …/issues/{n}/timeline): a comment or an event.
+struct TimelineEvent: Decodable, Hashable {
+    struct Label: Decodable, Hashable { let name: String; let color: String }
+    struct Rename: Decodable, Hashable { let from: String; let to: String }
+    struct Source: Decodable, Hashable {
+        struct Issue: Decodable, Hashable {
+            struct PullLink: Decodable, Hashable { let mergedAt: Date? }
+            struct Repository: Decodable, Hashable { let fullName: String }
+            let number: Int
+            let title: String
+            let htmlUrl: URL
+            let state: String
+            let pullRequest: PullLink?
+            let repository: Repository?
+        }
+        let issue: Issue?
+    }
+
+    let id: Int?
+    /// commented, labeled, unlabeled, cross-referenced, closed, reopened, merged, review_requested, reviewed,
+    /// committed, assigned, renamed, head_ref_deleted…
+    let event: String?
+    let actor: Actor?
+    let user: Actor?
+    let createdAt: Date?
+    let submittedAt: Date?
+    let body: String?
+    let authorAssociation: String?
+    let label: Label?
+    let source: Source?
+    let state: String?
+    let message: String?
+    let requestedReviewer: Actor?
+    let assignee: Actor?
+    let rename: Rename?
+
+    var who: String { (user ?? actor)?.login ?? "someone" }
+    var date: Date? { createdAt ?? submittedAt }
+}
+
 struct IssueComment: Decodable, Identifiable, Hashable {
     let id: Int
     let user: Actor
@@ -376,7 +417,10 @@ struct GitHubNotification: Decodable, Identifiable, Hashable {
     let id: String
     var unread: Bool
     let reason: String
-    let updatedAt: Date
+    /// Overridden for a snoozed thread when it comes back, so it sorts to the top.
+    var updatedAt: Date
+    /// When you last read the thread; comments after it are new.
+    let lastReadAt: Date?
     let subject: Subject
     let repository: RepoRef
 

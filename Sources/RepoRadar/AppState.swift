@@ -23,11 +23,36 @@ final class AppState {
 
     // MARK: Inbox & pull requests
 
-    /// Every thread GitHub returned; `notifications` leaves out threads an action is about to mark done.
+    /// Every thread GitHub returned. `notifications` is what the app shows: without threads an action is about
+    /// to mark done or that are snoozed, read where you read them, and snoozed threads that came back as unread.
     private(set) var inbox: [GitHubNotification] = []
     var notifications: [GitHubNotification] {
-        hiddenThreads.isEmpty ? inbox : inbox.filter { !hiddenThreads.contains($0.id) }
+        guard !hiddenThreads.isEmpty || !snoozedThreads.isEmpty || !readThreads.isEmpty else { return inbox }
+        let now = Date()
+        return inbox.compactMap { thread in
+            guard !hiddenThreads.contains(thread.id) else { return nil }
+            var thread = thread
+            if let until = snoozedThreads[thread.id] {
+                guard until <= now else { return nil }
+                thread.unread = true  // back from snooze: unread, at the top
+                thread.updatedAt = max(thread.updatedAt, until)
+            }
+            if readThreads.contains(thread.id) { thread.unread = false }
+            return thread
+        }
     }
+    /// Threads snoozed until a date (I4). Local only; when the time comes they're unread again.
+    private(set) var snoozedThreads = UserDefaults.standard.dictionary(forKey: "snoozedThreads") as? [String: Date] ?? [:] {
+        didSet { defaults.set(snoozedThreads, forKey: "snoozedThreads") }
+    }
+    /// Threads read here that GitHub may not report as read yet (an undoable Mark All Read, or one in flight).
+    private(set) var readThreads: Set<String> = []
+    /// Unsent replies per thread (I9).
+    var drafts = UserDefaults.standard.dictionary(forKey: "replyDrafts") as? [String: String] ?? [:] {
+        didSet { defaults.set(drafts, forKey: "replyDrafts") }
+    }
+    /// Bumped after a comment lands, so open threads reload their timeline.
+    private(set) var timelineVersion = 0
     private(set) var pulls: [PullItem] = []
     /// Environments waiting runs are blocked on, per run id.
     private(set) var pendingDeployments: [Int: [PendingDeployment]] = [:]
@@ -108,7 +133,7 @@ final class AppState {
         self.toasts = toasts
         actions = ActionQueue(toasts: toasts)
         defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false,
-                                      "notifyFinishedRuns": true, "notifyStartedRuns": true])
+                                      "notifyFinishedRuns": true, "notifyStartedRuns": true, "doneAfterReply": true])
     }
 
     var repos: [String] { runsByRepo.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending } }
@@ -614,6 +639,8 @@ final class AppState {
         for index in inbox.indices where ids.contains(inbox[index].id) {
             inbox[index].unread = false
         }
+        // A snoozed thread that came back is handled once it's read.
+        for id in ids where (snoozedThreads[id] ?? .distantFuture) <= Date() { snoozedThreads[id] = nil }
         publishBadge()
         Task {
             do {
@@ -622,6 +649,89 @@ final class AppState {
                 self.error = error.localizedDescription
             }
         }
+    }
+
+    /// Mark All Read (I1): everything in `items`, undoable. With no filter beyond a repository scope this is one
+    /// PUT for the whole inbox (or repository); otherwise each thread is marked on its own.
+    func markAllRead(_ items: [GitHubNotification], wholeInbox: Bool) {
+        let ids = Set(items.filter(\.unread).map(\.id))
+        guard !ids.isEmpty else { return }
+        let repo = scopeRepo
+        actions.perform(ids.count == 1 ? "Marked 1 read" : "Marked \(ids.count) read", apply: { [self] in
+            readThreads.formUnion(ids)
+            publishBadge()
+        }, revert: { [self] in
+            readThreads.subtract(ids)
+            publishBadge()
+        }, commit: { [client] in
+            if wholeInbox {
+                try await client.markAllRead(repo: repo)
+            } else {
+                for id in ids { try await client.markRead(thread: id) }
+            }
+        }, completed: { [self] in
+            for index in inbox.indices where ids.contains(inbox[index].id) { inbox[index].unread = false }
+            readThreads.subtract(ids)
+        })
+    }
+
+    /// Snooze (I4): the thread leaves the Inbox and Now until `date`, then comes back unread at the top.
+    func snooze(_ items: [GitHubNotification], until date: Date) {
+        let ids = items.map(\.id)
+        guard !ids.isEmpty else { return }
+        let previous = ids.map { snoozedThreads[$0] }
+        actions.perform("Snoozed until \(date.formatted(date: .abbreviated, time: .shortened))", apply: { [self] in
+            for id in ids { snoozedThreads[id] = date }
+            publishBadge()
+        }, revert: { [self] in
+            for (id, old) in zip(ids, previous) { snoozedThreads[id] = old }
+            publishBadge()
+        }, commit: {})
+    }
+
+    /// Mute (I4, I6): unsubscribes so new activity stays out of the Inbox, and marks the thread done.
+    func mute(_ items: [GitHubNotification]) {
+        let ids = Set(items.map(\.id))
+        guard !ids.isEmpty else { return }
+        actions.perform(ids.count == 1 ? "Muted thread" : "Muted \(ids.count) threads", apply: { [self] in
+            hiddenThreads.formUnion(ids)
+            publishBadge()
+        }, revert: { [self] in
+            hiddenThreads.subtract(ids)
+            publishBadge()
+        }, commit: { [client] in
+            for id in ids {
+                try await client.unsubscribe(thread: id)
+                try await client.markDone(thread: id)
+            }
+        }, completed: { [self] in
+            inbox.removeAll { ids.contains($0.id) }
+            hiddenThreads.subtract(ids)
+        })
+    }
+
+    /// Comment (I9), optionally closing the issue. The draft clears at once and comes back if GitHub refuses.
+    /// The thread is then marked done unless Settings turns that off.
+    func comment(on ref: IssueRef, body: String, close: Bool = false, thread: GitHubNotification?) {
+        let key = thread?.id ?? subjectKey(ref.repo, ref.number)
+        let markDone = thread != nil && defaults.bool(forKey: "doneAfterReply")
+        let ids: Set<String> = markDone ? [thread!.id] : []
+        actions.perform(close ? "Commented and closed \(label(ref.repo, ref.number))" : "Commented on \(label(ref.repo, ref.number))",
+                        apply: { [self] in
+            drafts[key] = nil
+            hiddenThreads.formUnion(ids)
+        }, revert: { [self] in
+            drafts[key] = body
+            hiddenThreads.subtract(ids)
+        }, commit: { [client] in
+            try await client.addComment(ref, body: body)
+            if close { try await client.closeIssue(ref) }
+            for id in ids { try await client.markDone(thread: id) }
+        }, completed: { [self] in
+            inbox.removeAll { ids.contains($0.id) }
+            hiddenThreads.subtract(ids)
+            timelineVersion += 1
+        })
     }
 
     /// Done removes the thread from the inbox until something new happens on it.

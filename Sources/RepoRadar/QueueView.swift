@@ -800,31 +800,38 @@ enum SnoozePreset {
 struct SnoozeButton: View {
     @Binding var isPresented: Bool
     let snooze: (Date) -> Void
-    @State private var custom = Date().addingTimeInterval(3 * 3600)
 
     var body: some View {
         Button { isPresented = true } label: { HStack(spacing: 6) { Text("Snooze"); Kbd("S") } }
             .buttonStyle(.ghost)
             .help("Snooze (S)")
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(SnoozePreset.dates(), id: \.title) { preset in
-                        Button(preset.title) { pick(preset.date) }
-                            .buttonStyle(.ghost)
-                    }
-                    Divider().padding(.vertical, 4)
-                    HStack {
-                        DatePicker("Custom", selection: $custom, in: Date()...)
-                            .labelsHidden()
-                        Button("Snooze") { pick(custom) }.buttonStyle(.secondary).controlSize(.small)
-                    }
+                SnoozeOptions { date in
+                    isPresented = false
+                    snooze(date)
                 }
-                .padding(10)
             }
     }
+}
 
-    private func pick(_ date: Date) {
-        isPresented = false
-        snooze(date)
+/// The snooze presets plus a custom date, as a popover's content.
+struct SnoozeOptions: View {
+    let pick: (Date) -> Void
+    @State private var custom = Date().addingTimeInterval(3 * 3600)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(SnoozePreset.dates(), id: \.title) { preset in
+                Button(preset.title) { pick(preset.date) }
+                    .buttonStyle(.ghost)
+            }
+            Divider().padding(.vertical, 4)
+            HStack {
+                DatePicker("Custom", selection: $custom, in: Date()...)
+                    .labelsHidden()
+                Button("Snooze") { pick(custom) }.buttonStyle(.secondary).controlSize(.small)
+            }
+        }
+        .padding(10)
     }
 }

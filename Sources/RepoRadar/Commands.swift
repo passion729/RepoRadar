@@ -59,6 +59,8 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .textEditing) {
             Button("Search or Jump To…") { SearchField.focusInKeyWindow() }
                 .keyboardShortcut("k")
+            Button("Find…") { SearchField.focusInKeyWindow() }
+                .keyboardShortcut("f")
         }
 
         CommandGroup(after: .newItem) {

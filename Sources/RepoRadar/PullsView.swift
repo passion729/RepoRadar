@@ -4,6 +4,7 @@ import SwiftUI
 struct PullsView: View {
     @Environment(AppState.self) private var state
     let search: String
+    let toolbar: StandardToolbar
     @SceneStorage("pullRole") private var role: PRRole = .reviewRequested
     @SceneStorage("pullListWidth") private var listWidth = 320.0
     @State private var selection: Set<PullItem.ID> = []
@@ -12,11 +13,13 @@ struct PullsView: View {
     var body: some View {
         SplitPane(size: $listWidth, range: 280...520, minFlexible: 400) {
             VStack(spacing: 0) {
-                Segmented(selection: $role, segments: PRRole.allCases.map { option in
-                    Segment(value: option, title: option.shortTitle, count: scopedItems.count(where: { $0.roles.contains(option) }))
-                })
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollView(.horizontal) {
+                    Segmented(selection: $role, segments: PRRole.allCases.map { option in
+                        Segment(value: option, title: option.shortTitle, count: scopedItems.count(where: { $0.roles.contains(option) }))
+                    })
+                    .padding(12)
+                }
+                .scrollIndicators(.never)
                 PullTable(items: visibleItems, selection: $selection, sortOrder: $sortOrder)
                     .overlay { if visibleItems.isEmpty { emptyState } }
             }
@@ -28,6 +31,7 @@ struct PullsView: View {
             }
         }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.pr.htmlUrl))
+        .toolbar { toolbar }
         .onChange(of: state.requestedSelection, initial: true) {
             guard case .pull(let id)? = state.requestedSelection, let pull = state.pulls.first(where: { $0.id == id }) else { return }
             if !pull.roles.contains(role) { role = PRRole.allCases.first(where: pull.roles.contains) ?? role }

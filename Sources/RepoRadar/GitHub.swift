@@ -224,6 +224,22 @@ actor GitHubClient {
         try await get("/notifications", query: ["all": "true", "per_page": "50"])
     }
 
+    /// Marks every thread read up to now, everywhere or in one repository.
+    func markAllRead(repo: String? = nil) async throws {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        try await send(repo.map { "/repos/\($0)/notifications" } ?? "/notifications", method: "PUT",
+                       body: ["last_read_at": stamp, "read": true])
+    }
+
+    /// Mutes a thread: new activity on it won't notify you.
+    func unsubscribe(thread id: String) async throws {
+        try await send("/notifications/threads/\(id)/subscription", method: "DELETE")
+    }
+
+    func markRead(thread id: String) async throws {
+        try await send("/notifications/threads/\(id)", method: "PATCH")
+    }
+
     func markRead(_ notification: GitHubNotification) async throws {
         try await send("/notifications/threads/\(notification.id)", method: "PATCH")
     }
@@ -245,6 +261,26 @@ actor GitHubClient {
             "sort": "updated", "order": "desc", "per_page": "50"
         ])
         return page.items
+    }
+
+    func timeline(_ ref: IssueRef) async throws -> [TimelineEvent] {
+        // ponytail: first 100 entries; follow `Link` pages for very long threads.
+        try await get("/repos/\(ref.repo)/issues/\(ref.number)/timeline", query: ["per_page": "100"])
+    }
+
+    func closeIssue(_ ref: IssueRef) async throws {
+        try await send("/repos/\(ref.repo)/issues/\(ref.number)", method: "PATCH", body: ["state": "closed"])
+    }
+
+    /// Whether you can triage (close, label) in a repository.
+    func canTriage(_ repo: String) async throws -> Bool {
+        struct Repository: Decodable {
+            struct Permissions: Decodable { let triage: Bool?; let push: Bool?; let admin: Bool? }
+            let permissions: Permissions?
+        }
+        let repository: Repository = try await get("/repos/\(repo)")
+        let permissions = repository.permissions
+        return permissions?.triage == true || permissions?.push == true || permissions?.admin == true
     }
 
     func issue(_ ref: IssueRef) async throws -> IssueDetail {

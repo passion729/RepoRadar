@@ -5,6 +5,7 @@ import SwiftUI
 /// an inspector (⌥⌘I).
 struct NowView: View {
     @Environment(AppState.self) private var state
+    let toolbar: StandardToolbar
     @SceneStorage("nowRightWidth") private var rightWidth = 420.0
     @SceneStorage("queueFilter") private var filter: QueueFilter = .all
     @SceneStorage("nowInspector") private var showsInspector = false
@@ -38,6 +39,7 @@ struct NowView: View {
                     .help("Running now and Repository health (⌥⌘I)")
                 }
             }
+            toolbar
         }
         .focusedSceneValue(\.inspector, isCompact ? $showsInspector : nil)
     }

@@ -53,6 +53,24 @@ struct Chip: View {
     }
 }
 
+/// A GitHub label in its repository color (see `LabelColors`).
+struct LabelChip: View {
+    let label: IssueLabel
+
+    var body: some View {
+        let hex = UInt32(label.color, radix: 16) ?? 0x808080
+        Text(label.name)
+            .textStyle(.label)
+            .lineLimit(1)
+            .foregroundStyle(Color.dynamic(light: Color(hex: LabelColors.text(hex, dark: false)),
+                                           dark: Color(hex: LabelColors.text(hex, dark: true))))
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(Color(hex: hex, alpha: 0.22), in: .capsule)
+            .fixedSize()
+    }
+}
+
 /// A keyboard shortcut hint, e.g. ⌘K. Drawn relative to the surrounding text color,
 /// so it reads on plain backgrounds and inside filled buttons alike.
 struct Kbd: View {

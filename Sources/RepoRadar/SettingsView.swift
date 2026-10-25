@@ -97,6 +97,7 @@ struct GeneralSettings: View {
     @AppStorage("notifyInbox") private var notifyInbox = true
     @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
     @AppStorage("autoReadSeconds") private var autoReadSeconds = 3
+    @AppStorage("doneAfterReply") private var doneAfterReply = true
 
     var body: some View {
         Form {
@@ -143,6 +144,7 @@ struct GeneralSettings: View {
                     Text("Never").tag(0)
                     ForEach([1, 2, 3, 5, 10, 30], id: \.self) { Text("\($0) sec").tag($0) }
                 }
+                Toggle("Mark a thread done after replying to it", isOn: $doneAfterReply)
             } footer: {
                 Text("Read notifications, and failing workflows or review requests you've viewed, stop counting toward the badges until something new happens.")
             }

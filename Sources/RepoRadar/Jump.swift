@@ -5,6 +5,8 @@ import SwiftUI
 struct JumpQuery: Equatable {
     var repo: String?
     var author: String?
+    /// `reason:` filters notifications by GitHub's reason (Inbox search).
+    var reason: String?
     var number: Int?
     var words: [String] = []
 
@@ -13,6 +15,8 @@ struct JumpQuery: Equatable {
             let lower = token.lowercased()
             if lower.hasPrefix("repo:"), token.count > 5 {
                 repo = String(token.dropFirst(5))
+            } else if lower.hasPrefix("reason:"), token.count > 7 {
+                reason = String(token.dropFirst(7))
             } else if lower.hasPrefix("author:"), token.count > 7 {
                 author = String(token.dropFirst(7))
             } else if token.hasPrefix("#"), let number = Int(token.dropFirst()) {
@@ -23,7 +27,7 @@ struct JumpQuery: Equatable {
         }
     }
 
-    var isEmpty: Bool { repo == nil && author == nil && number == nil && words.isEmpty }
+    var isEmpty: Bool { repo == nil && author == nil && reason == nil && number == nil && words.isEmpty }
 }
 
 struct JumpResult: Identifiable, Hashable {

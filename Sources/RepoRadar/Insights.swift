@@ -165,3 +165,40 @@ enum LogExcerpt {
         return (line, false)
     }
 }
+
+// MARK: - GitHub label colors
+
+/// GitHub labels keep their repository color: the chip is that color at 22%, and the text is the same hue
+/// darkened (light appearance) or lightened (dark appearance) until it reaches 4.5:1 on the window.
+enum LabelColors {
+    static func text(_ hex: UInt32, dark: Bool) -> UInt32 {
+        let background: UInt32 = dark ? 0x1E1E22 : 0xFFFFFF
+        let target: UInt32 = dark ? 0xFFFFFF : 0x000000
+        var color = hex
+        for step in 0...20 where contrast(color, background) < 4.5 {
+            color = mix(hex, target, Double(step) / 20)
+        }
+        return color
+    }
+
+    static func contrast(_ a: UInt32, _ b: UInt32) -> Double {
+        let (la, lb) = (luminance(a), luminance(b))
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    static func luminance(_ hex: UInt32) -> Double {
+        func channel(_ shift: UInt32) -> Double {
+            let value = Double((hex >> shift) & 0xFF) / 255
+            return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+
+    static func mix(_ a: UInt32, _ b: UInt32, _ amount: Double) -> UInt32 {
+        func channel(_ shift: UInt32) -> UInt32 {
+            let x = Double((a >> shift) & 0xFF), y = Double((b >> shift) & 0xFF)
+            return UInt32((x + (y - x) * amount).rounded()) << shift
+        }
+        return channel(16) | channel(8) | channel(0)
+    }
+}
