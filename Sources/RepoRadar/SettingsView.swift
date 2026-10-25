@@ -136,11 +136,7 @@ struct GeneralSettings: View {
     @Environment(AppState.self) private var state
     @AppStorage("refreshMinutes") private var refreshMinutes = 5
     @AppStorage("lookbackDays") private var lookbackDays = 30
-    @AppStorage("notifyFailures") private var notifyFailures = true
-    @AppStorage("notifyFinishedRuns") private var notifyFinishedRuns = true
-    @AppStorage("notifyStartedRuns") private var notifyStartedRuns = true
-    @AppStorage("notifyInbox") private var notifyInbox = true
-    @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("autoReadSeconds") private var autoReadSeconds = 3
     @AppStorage("doneAfterReply") private var doneAfterReply = true
 
@@ -176,13 +172,14 @@ struct GeneralSettings: View {
                 Text("Exclude repositories or whole organizations from the Filter Repositories button in the toolbar.")
             }
             Section {
-                Toggle("Notify about new GitHub notifications", isOn: $notifyInbox)
-                Toggle("Include activity on my own pull requests and issues", isOn: $notifyOwnActivity)
-                    .disabled(!notifyInbox)
-                    .padding(.leading, 20)
-                Toggle("Notify when a workflow run starts", isOn: $notifyStartedRuns)
-                Toggle("Notify when a workflow run finishes", isOn: $notifyFinishedRuns)
-                Toggle("Notify when a workflow starts failing", isOn: $notifyFailures)
+                ForEach(Alerts.Kind.allCases, id: \.self) { AlertToggle(kind: $0) }
+            } header: {
+                Text("Alert me when")
+            } footer: {
+                Text("Everything else only updates the counts. The Dock badge counts what needs you.")
+            }
+            Section {
+                Toggle("Show RepoRadar in the menu bar", isOn: $showMenuBarIcon)
             }
             Section {
                 Picker("Mark as read after viewing", selection: $autoReadSeconds) {

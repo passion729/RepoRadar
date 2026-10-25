@@ -169,6 +169,10 @@ struct ActionsView: View {
     private func select(_ request: SelectionRequest?, in workflows: [WorkflowSummary]) {
         let (runID, jobID): (Int, Int?)
         switch request {
+        case .runFilter(let option)?:
+            filter = option
+            state.requestedSelection = nil
+            return
         case .run(let id)?: (runID, jobID) = (id, nil)
         case .job(let run, let job)?: (runID, jobID) = (run, job)
         default: return

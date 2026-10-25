@@ -45,7 +45,10 @@ struct RepoRadarApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if Bundle.main.bundleIdentifier != nil { UNUserNotificationCenter.current().delegate = self }
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = self
+            UNUserNotificationCenter.current().setNotificationCategories(Alerts.categories)
+        }
         // `swift run` launches a bare binary; make it a regular foreground app.
         NSApp.setActivationPolicy(.regular)
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
@@ -80,9 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         [.banner, .sound]
     }
 
+    /// A click on an alert opens the item in RepoRadar; Re-run failed and Approve act without opening it.
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        if let url = (response.notification.request.content.userInfo["url"] as? String).flatMap(URL.init) {
-            NSWorkspace.shared.open(url)
-        }
+        let info = response.notification.request.content.userInfo
+        let url = (info["url"] as? String).flatMap(URL.init)
+        let item = (info["item"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let action = response.actionIdentifier
+        await MainActor.run { AppState.shared.handleAlert(action: action, itemID: item, url: url) }
     }
 }

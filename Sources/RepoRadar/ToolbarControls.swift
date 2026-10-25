@@ -188,12 +188,6 @@ struct AlertSettingsButton: View {
 
 private struct AlertSettingsPopover: View {
     @Environment(AppState.self) private var state
-    @AppStorage("notifyInbox") private var notifyInbox = true
-    @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
-    @AppStorage("notifyFailures") private var notifyFailures = true
-    @AppStorage("notifyStartedRuns") private var notifyStartedRuns = true
-    @AppStorage("notifyFinishedRuns") private var notifyFinishedRuns = true
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Notifications").textStyle(.paneTitle)
@@ -210,17 +204,13 @@ private struct AlertSettingsPopover: View {
                     .buttonStyle(.secondary)
             }
             Rectangle().fill(Theme.separator).frame(height: 1)
+            Text("Alert me when").textStyle(.label).foregroundStyle(Theme.Ink.tertiary)
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("New GitHub notifications", isOn: $notifyInbox)
-                Toggle("Include my own pull requests and issues", isOn: $notifyOwnActivity)
-                    .disabled(!notifyInbox)
-                    .padding(.leading, 20)
-                Toggle("A workflow starts failing", isOn: $notifyFailures)
-                Toggle("A workflow run starts", isOn: $notifyStartedRuns)
-                Toggle("A workflow run finishes", isOn: $notifyFinishedRuns)
+                ForEach(Alerts.Kind.allCases, id: \.self) { AlertToggle(kind: $0) }
             }
             .toggleStyle(.checkbox)
             .textStyle(.meta)
+            Text("Everything else only updates the counts.").textStyle(.meta).foregroundStyle(Theme.Ink.tertiary)
             HStack {
                 Spacer()
                 SettingsLink { Text("More Settings…") }.buttonStyle(.ghost)
@@ -228,6 +218,21 @@ private struct AlertSettingsPopover: View {
         }
         .padding(16)
         .frame(width: 320)
+    }
+}
+
+/// One G6 alert kind's switch.
+struct AlertToggle: View {
+    let kind: Alerts.Kind
+    @AppStorage private var isOn: Bool
+
+    init(kind: Alerts.Kind) {
+        self.kind = kind
+        _isOn = AppStorage(wrappedValue: true, kind.setting)
+    }
+
+    var body: some View {
+        Toggle(kind.title, isOn: $isOn)
     }
 }
 

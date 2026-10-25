@@ -63,6 +63,12 @@ struct AppCommands: Commands {
                 .keyboardShortcut("f")
         }
 
+        CommandGroup(before: .windowList) {
+            Button("Open RepoRadar") { openWindow(id: "main") }
+                .keyboardShortcut("0")
+            Divider()
+        }
+
         CommandGroup(after: .newItem) {
             LinkActions(urls: selectedURLs ?? [])
                 .environment(state)
@@ -115,6 +121,7 @@ struct AppCommands: Commands {
         #if DEBUG
         CommandMenu("Debug") {
             Button("Component Gallery") { openWindow(id: "gallery") }
+            Button("Show Menu Bar Panel") { MenuBarController.shared?.toggle() }
         }
         #endif
     }

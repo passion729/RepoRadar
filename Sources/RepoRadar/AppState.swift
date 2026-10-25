@@ -11,8 +11,7 @@ final class AppState {
     private(set) var runsByRepo: [String: [WorkflowRun]] = [:] {
         didSet {
             latestRuns = runsByRepo.values.flatMap { $0.latestPerWorkflow() }
-            announceStartedRuns(before: oldValue)
-            announceFinishedRuns(before: oldValue)
+            announceWatchedRuns()
         }
     }
     /// Current status of every workflow across all repos. Stored rather than computed
@@ -134,8 +133,11 @@ final class AppState {
 
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
     /// Ids seen at the last refresh; nil until the first load so launching doesn't notify about old items.
-    @ObservationIgnored private var knownFailures: Set<Int>?
-    @ObservationIgnored private var knownUnread: Set<String>?
+    /// Revisions of the Needs-you items already alerted about; nil until the first load, so launching
+    /// doesn't alert about what was already there.
+    @ObservationIgnored private var knownAlerts: Set<String>?
+    /// Runs to report when they finish (M4, "Notify me when these finish").
+    private(set) var watchedRuns: Set<Int> = []
 
     private let defaults = UserDefaults.standard
     private let client = GitHubClient.shared
@@ -145,7 +147,7 @@ final class AppState {
         let toasts = ToastCenter()
         self.toasts = toasts
         actions = ActionQueue(toasts: toasts)
-        defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false,
+        defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyPushFailed": true, "notifyReviews": true, "notifyMentions": true, "notifyDeployments": true, "notifyInbox": true, "notifyOwnActivity": false,
                                       "notifyFinishedRuns": true, "notifyStartedRuns": true, "doneAfterReply": true])
     }
 
@@ -353,7 +355,8 @@ final class AppState {
             tokenScopes = await client.scopes
             error = nil
             failure = nil
-            publishFailures()
+            publishBadge()
+            checkAlerts()
         } catch {
             self.error = error.localizedDescription
             failure = SyncFailure(error)
@@ -381,6 +384,8 @@ final class AppState {
         if merged != runsByRepo {
             runsByRepo = merged
             pendingDeployments = await fetchPendingDeployments()
+            publishBadge()
+            checkAlerts()
         }
     }
 
@@ -403,6 +408,7 @@ final class AppState {
         allPulls = fresh.filter { !isExcluded($0.repo) }
         hiddenPulls.formIntersection(allPulls.map(\.id))
         publishBadge()
+        checkAlerts()
     }
 
     /// Done and snooze marks for items that no longer exist, or snoozes that have run out, are dropped.
@@ -416,39 +422,6 @@ final class AppState {
         let live = snoozedItems.filter { $0.value > now }
         if live.count != snoozedItems.count { snoozedItems = live }
         hiddenItems.formIntersection(revisions)
-    }
-
-    /// Notifies about runs that appeared since the last update and are queued or running.
-    private func announceStartedRuns(before old: [String: [WorkflowRun]]) {
-        // An empty `old` is the first load (or a new sign-in): those runs aren't news.
-        guard !old.isEmpty, defaults.bool(forKey: "notifyStartedRuns") else { return }
-        let known = Set(old.values.joined().map(\.id))
-        let started = runsByRepo.values.joined().filter { !known.contains($0.id) && $0.state.isActive }
-        for run in started {
-            post(id: "started-\(run.id)", title: "\(run.workflowName) started", subtitle: run.repo,
-                 body: "\(run.displayTitle) · \(run.branchName) · \(run.event)", url: run.htmlUrl)
-        }
-    }
-
-    /// Notifies about runs that were queued or running and have now completed.
-    private func announceFinishedRuns(before old: [String: [WorkflowRun]]) {
-        let wasActive = Set(old.values.joined().filter(\.state.isActive).map(\.id))
-        guard !wasActive.isEmpty else { return }
-        let finished = runsByRepo.values.joined().filter { wasActive.contains($0.id) && !$0.state.isActive }
-        for run in finished {
-            // The failure alert below would repeat this one; mark it as already reported.
-            if run.state == .failure { knownFailures?.insert(run.id) }
-            guard defaults.bool(forKey: "notifyFinishedRuns") else { continue }
-            let verb = switch run.state {
-            case .success: "succeeded"
-            case .failure: "failed"
-            case .cancelled: "was cancelled"
-            default: "finished"
-            }
-            post(id: "finished-\(run.id)", title: "\(run.workflowName) \(verb)", subtitle: run.repo,
-                 body: "\(run.displayTitle) · \(run.branchName) · \(Duration.seconds(run.duration).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow)))",
-                 url: run.htmlUrl)
-        }
     }
 
     private func refreshInbox() async {
@@ -893,8 +866,8 @@ final class AppState {
         hiddenThreads = []
         failedItems = []
         seen = []
-        knownFailures = nil
-        knownUnread = nil
+        knownAlerts = nil
+        watchedRuns = []
         publishBadge()
     }
 
@@ -913,36 +886,74 @@ final class AppState {
         let fresh = allInbox.filter { !isExcluded($0.repo) }
         inbox = fresh
         publishBadge()
+        checkAlerts()
+    }
 
-        let unread = fresh.filter(\.unread)
-        defer { knownUnread = Set(unread.map(\.id)) }
-        guard let known = knownUnread, defaults.bool(forKey: "notifyInbox") else { return }
-        // Threads you started (reason "author") stay in the Inbox but don't pop up unless opted in.
-        let includeOwn = defaults.bool(forKey: "notifyOwnActivity")
-        for item in unread where !known.contains(item.id) && (includeOwn || item.reason != "author") {
-            post(id: "inbox-\(item.id)", title: item.title, subtitle: "\(item.repo) · \(item.reasonLabel)", body: nil, url: item.webURL)
+    // MARK: - Alerts (G6)
+
+    /// Alerts about new Needs-you items of the four kinds G6 allows; everything else only updates counts.
+    private func checkAlerts() {
+        guard login != nil else { return }  // "your push" needs to know who you are
+        let items = allNeedsYou
+        defer { knownAlerts = (knownAlerts ?? []).union(items.map(\.revision)) }
+        guard let known = knownAlerts else { return }
+        for item in Alerts.fresh(items, known: known, enabled: Alerts.Kind.allCases.filter { defaults.bool(forKey: $0.setting) }) {
+            let alert = Alerts.content(for: item)
+            post(id: "item-\(item.revision)", title: alert.title, subtitle: alert.subtitle, body: alert.body, url: item.url,
+                 category: alert.kind.category, itemID: item.id)
         }
     }
 
-    private func publishFailures() {
-        publishBadge()
-        let failing = latestRuns.filter { $0.state == .failure }
-        defer { knownFailures = Set(failing.map(\.id)) }
-        guard let known = knownFailures, defaults.bool(forKey: "notifyFailures") else { return }
-        for run in failing where !known.contains(run.id) {
-            post(id: "run-\(run.id)", title: "\(run.workflowName) failed", subtitle: run.repo,
-                 body: "\(run.displayTitle) · \(run.branchName)", url: run.htmlUrl)
+    /// "Notify me when these finish" (M4): only the runs running when it was ticked.
+    func watchRunning(_ watch: Bool) {
+        watchedRuns = watch ? Set(runningRuns.map(\.id)) : []
+    }
+
+    private func announceWatchedRuns() {
+        guard !watchedRuns.isEmpty else { return }
+        for run in runsByRepo.values.joined() where watchedRuns.contains(run.id) && !run.state.isActive {
+            watchedRuns.remove(run.id)
+            let verb = switch run.state {
+            case .success: "succeeded"
+            case .failure: "failed"
+            case .cancelled: "was cancelled"
+            default: "finished"
+            }
+            post(id: "finished-\(run.id)", title: "\(run.workflowName) \(verb)", subtitle: run.repo,
+                 body: "\(run.displayTitle) · \(run.branchName) · \(run.duration.shortDuration)", url: run.htmlUrl,
+                 category: run.state == .failure ? Alerts.Kind.pushFailed.category : Alerts.openCategory, itemID: nil)
         }
     }
 
-    private func post(id: String, title: String, subtitle: String, body: String?, url: URL) {
+    /// A click on an alert or one of its buttons. Re-run and Approve act right away (with the usual undo window);
+    /// anything else opens the main window on the item.
+    func handleAlert(action: String, itemID: String?, url: URL?) {
+        let item = itemID.flatMap { id in allNeedsYou.first { $0.id == id } }
+        switch (action, item?.kind) {
+        case (Alerts.rerunAction, .pushFailed(let run)?): rerunFailedJobs([run], item: item)
+        case (Alerts.approveAction, .deployment?): if let item { reviewDeployment(item, approve: true) }
+        case (Alerts.rerunAction, nil), (Alerts.approveAction, nil):
+            if let url { NSWorkspace.shared.open(url) }  // already handled elsewhere: show it on GitHub
+        default:
+            if let item {
+                navigate(to: .now, select: .queueItem(item.id))
+            } else if let url {
+                NSWorkspace.shared.open(url)
+                return
+            }
+            MenuBarController.shared?.show(nil)
+        }
+    }
+
+    private func post(id: String, title: String, subtitle: String, body: String?, url: URL, category: String, itemID: String?) {
         guard canNotify, !alertsPaused else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.subtitle = subtitle
         if let body { content.body = body }
         content.sound = .default
-        content.userInfo = ["url": url.absoluteString]
+        content.categoryIdentifier = category
+        content.userInfo = ["url": url.absoluteString, "item": itemID ?? ""]
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 }
@@ -1026,6 +1037,10 @@ enum SyncCadence {
 /// What a page should select when asked by another page.
 enum SelectionRequest: Equatable {
     case pull(Int), run(Int), thread(String)
+    /// A Needs-you item to select and open on Now.
+    case queueItem(String)
+    /// A list filter to switch to (from the menu bar's numbers).
+    case queueFilter(QueueFilter), runFilter(RunFilter), inboxFilter(InboxFilter)
     /// A run with one of its jobs selected.
     case job(run: Int, job: Int)
 }

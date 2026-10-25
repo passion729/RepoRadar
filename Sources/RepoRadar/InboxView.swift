@@ -57,6 +57,11 @@ struct InboxView: View {
             self.selection = new.isEmpty ? nil : new[min(index, new.count - 1)]
         }
         .onChange(of: state.requestedSelection, initial: true) {
+            if case .inboxFilter(let option)? = state.requestedSelection {
+                filter = option
+                state.requestedSelection = nil
+                return
+            }
             guard case .thread(let id)? = state.requestedSelection else { return }
             if !(state.notifications.first { $0.id == id }.map(filter.matches) ?? true) { filter = .all }
             selection = id

@@ -87,6 +87,19 @@ struct QueuePane: View {
         .onChange(of: items.map(\.id), initial: true) { _, ids in
             if selection == nil || !ids.contains(selection!) { selection = ids.first }
         }
+        .onChange(of: state.requestedSelection, initial: true) {
+            switch state.requestedSelection {
+            case .queueItem(let id)?:
+                if let item = state.needsYou.first(where: { $0.id == id }), !filter.matches(item) { filter = .all }
+                selection = id
+                isExpanded = true
+            case .queueFilter(let option)?:
+                filter = option
+            default:
+                return
+            }
+            state.requestedSelection = nil
+        }
     }
 
     private func list(_ items: [NeedsYouItem]) -> some View {
