@@ -111,14 +111,17 @@ struct AppCommands: Commands {
             Button("Mute Thread") { list?.mute?() }.keyboardShortcut("m", modifiers: []).disabled(list?.mute == nil)
         }
 
-        CommandMenu("Notification") {
-            NotificationActions(items: selectedNotifications ?? [])
-                .environment(state)
-        }
+        // Keep Debug builds within CommandsBuilder's ten-command limit.
+        Group {
+            CommandMenu("Notification") {
+                NotificationActions(items: selectedNotifications ?? [])
+                    .environment(state)
+            }
 
-        CommandMenu("Run") {
-            RunActions(runs: selectedRuns ?? [])
-                .environment(state)
+            CommandMenu("Run") {
+                RunActions(runs: selectedRuns ?? [])
+                    .environment(state)
+            }
         }
 
         #if DEBUG
