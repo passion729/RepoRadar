@@ -3,39 +3,28 @@ import SwiftUI
 /// Open pull requests that involve you, across every repository.
 struct PullsView: View {
     @Environment(AppState.self) private var state
-    @Binding var search: String
-    @Binding var scope: SearchScope
-    var focus: FocusState<FocusTarget?>.Binding
+    let search: String
     @SceneStorage("pullRole") private var role: PRRole = .reviewRequested
+    @SceneStorage("pullListWidth") private var listWidth = 320.0
     @State private var selection: Set<PullItem.ID> = []
     @State private var sortOrder = [KeyPathComparator(\PullItem.updatedAt, order: .reverse)]
 
     var body: some View {
-        Workspace(search: $search, scope: $scope, focus: focus) {
-            FilterTabBar(selection: $role, options: PRRole.allCases, title: \.title) { option in
-                state.pulls.count(where: { $0.roles.contains(option) })
+        SplitPane(size: $listWidth, range: 280...520, minFlexible: 400) {
+            VStack(spacing: 0) {
+                Segmented(selection: $role, segments: PRRole.allCases.map { option in
+                    Segment(value: option, title: option.shortTitle, count: scopedItems.count(where: { $0.roles.contains(option) }))
+                })
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                PullTable(items: visibleItems, selection: $selection, sortOrder: $sortOrder)
+                    .overlay { if visibleItems.isEmpty { emptyState } }
             }
-        } table: {
-            PullTable(items: visibleItems, selection: $selection, sortOrder: $sortOrder)
-                .overlay { if visibleItems.isEmpty { emptyState } }
-        } detail: {
+        } second: {
             if selectedItems.count == 1 {
                 IssueDetailView(ref: selectedItems[0].pr.ref)
             } else {
                 DetailPlaceholder()
-            }
-        } status: {
-            StatusBar(selected: selectedItems.count, visible: visibleItems.count) {
-                Button("Open", systemImage: "safari") { state.open(selectedItems.map(\.pr.htmlUrl)) }
-                    .disabled(selectedItems.isEmpty)
-                Button("Copy Link", systemImage: "link") { state.copyLinks(selectedItems.map(\.pr.htmlUrl)) }
-                    .disabled(selectedItems.isEmpty)
-            } stats: {
-                let toReview = state.pulls.count(where: { $0.roles.contains(.reviewRequested) })
-                Label("\(toReview) to review", systemImage: "eye")
-                    .foregroundStyle(toReview > 0 ? AnyShapeStyle(.purple) : AnyShapeStyle(.secondary))
-                Label("\(state.pulls.count) open", systemImage: "arrow.triangle.pull")
-                QuotaLabel()
             }
         }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.pr.htmlUrl))
@@ -49,7 +38,7 @@ struct PullsView: View {
         if !search.isEmpty {
             ContentUnavailableView.search(text: search)
         } else if state.isRefreshing && state.lastUpdated == nil {
-            ProgressView("Loading pull requests…")
+            SkeletonRows().frame(maxHeight: .infinity, alignment: .top)
         } else {
             ContentUnavailableView(
                 role == .reviewRequested ? "No Reviews Waiting" : "No Pull Requests",
@@ -59,10 +48,14 @@ struct PullsView: View {
         }
     }
 
+    private var scopedItems: [PullItem] {
+        state.pulls.filter { state.inScope($0.repo) }
+    }
+
     private var visibleItems: [PullItem] {
-        state.pulls
+        scopedItems
             .filter { $0.roles.contains(role) }
-            .filter { scope.matches(search, title: $0.title, repository: $0.repo, person: $0.author, other: ["#\($0.pr.number)"]) }
+            .filter { matchesSearch(search, [$0.title, $0.repo, $0.author, "#\($0.pr.number)"]) }
             .sorted(using: sortOrder)
     }
 

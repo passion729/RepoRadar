@@ -253,3 +253,38 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
 @Test func badgeCapsAt99() {
     #expect(Badge.text(0) == "0" && Badge.text(99) == "99" && Badge.text(100) == "99+")
 }
+
+@Test func syncStatusPrecedence() {
+    let now = Date()
+    let spent = RateLimit(remaining: 0, limit: 5000, reset: now.addingTimeInterval(600))
+    #expect(SyncStatus(hasToken: false, isRefreshing: true, failure: nil, rateLimit: nil, now: now) == .signInAgain)
+    #expect(SyncStatus(hasToken: true, isRefreshing: false, failure: .unauthorized, rateLimit: nil, now: now) == .signInAgain)
+    #expect(SyncStatus(hasToken: true, isRefreshing: true, failure: .offline, rateLimit: spent, now: now) == .offline)
+    #expect(SyncStatus(hasToken: true, isRefreshing: true, failure: nil, rateLimit: spent, now: now) == .rateLimited(until: spent.reset))
+    // A spent quota whose reset time has passed no longer counts.
+    #expect(SyncStatus(hasToken: true, isRefreshing: true, failure: nil, rateLimit: spent, now: now.addingTimeInterval(700)) == .syncing)
+    #expect(SyncStatus(hasToken: true, isRefreshing: false, failure: .other, rateLimit: nil, now: now) == .live)
+
+    #expect(SyncFailure(URLError(.notConnectedToInternet)) == .offline)
+    #expect(SyncFailure(GitHubError(message: "Bad credentials", status: 401)) == .unauthorized)
+    #expect(SyncFailure(GitHubError(message: "API rate limit exceeded for user", status: 403)) == .rateLimited)
+    #expect(SyncFailure(GitHubError(message: "Resource not accessible by integration", status: 403)) == .other)
+}
+
+@Test func runCellsSummaryAndSearch() throws {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    decoder.dateDecodingStrategy = .iso8601
+    let runs = try decoder.decode(WorkflowRunsPage.self, from: Data("""
+    {"workflow_runs": [
+      \(run(1, workflow: 10, created: "2026-01-01T00:00:00Z", status: "completed", conclusion: "success")),
+      \(run(2, workflow: 10, created: "2026-01-02T00:00:00Z", status: "completed", conclusion: "failure")),
+      \(run(3, workflow: 10, created: "2026-01-03T00:00:00Z", status: "completed", conclusion: "success"))
+    ]}
+    """.utf8)).workflowRuns
+    #expect(RunCells.summary(runs) == "Last 3 runs: 2 succeeded, 1 failed")
+    #expect(RunCells.summary([]) == "No runs")
+    #expect(matchesSearch("ci main", ["CI", "o/r", "main"]))
+    #expect(!matchesSearch("ci deploy", ["CI", "o/r", "main"]))
+    #expect(matchesSearch("", ["anything"]))
+}

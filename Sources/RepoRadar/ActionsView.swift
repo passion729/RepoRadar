@@ -14,6 +14,15 @@ enum RunFilter: String, CaseIterable, Identifiable {
         }
     }
 
+    var status: StatusKind? {
+        switch self {
+        case .failing: .failure
+        case .running: .running
+        case .passing: .success
+        case .all: nil
+        }
+    }
+
     func matches(_ run: WorkflowRun) -> Bool {
         switch self {
         case .all: true
@@ -24,43 +33,31 @@ enum RunFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// Every workflow's latest run (`repo == nil`), or one repository's run history.
+/// Every workflow's latest run, within the sidebar's repository scope.
 struct ActionsView: View {
     @Environment(AppState.self) private var state
-    let repo: String?
-    @Binding var search: String
-    @Binding var scope: SearchScope
-    var focus: FocusState<FocusTarget?>.Binding
+    let search: String
     @SceneStorage("runFilter") private var filter: RunFilter = .all
+    @SceneStorage("workflowListWidth") private var listWidth = 360.0
     @State private var selection: Set<WorkflowRun.ID> = []
     @State private var sortOrder = [KeyPathComparator(\WorkflowRun.createdAt, order: .reverse)]
 
     var body: some View {
-        Workspace(search: $search, scope: $scope, focus: focus) {
-            FilterTabBar(selection: $filter, options: RunFilter.allCases, title: \.title) { option in
-                scopedRuns.count(where: option.matches)
+        SplitPane(size: $listWidth, range: 300...560, minFlexible: 400) {
+            VStack(spacing: 0) {
+                Segmented(selection: $filter, segments: RunFilter.allCases.map { option in
+                    Segment(value: option, title: option.title, count: scopedRuns.count(where: option.matches), status: option.status)
+                })
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                RunTable(runs: visibleRuns, selection: $selection, sortOrder: $sortOrder)
+                    .overlay { if visibleRuns.isEmpty { emptyState } }
             }
-        } table: {
-            RunTable(runs: visibleRuns, selection: $selection, sortOrder: $sortOrder)
-                .overlay { if visibleRuns.isEmpty { emptyState } }
-        } detail: {
+        } second: {
             if selectedRuns.count == 1 {
                 RunDetail(run: selectedRuns[0])
             } else {
                 DetailPlaceholder()
-            }
-        } status: {
-            StatusBar(selected: selectedRuns.count, visible: visibleRuns.count) {
-                Button("Re-run Failed", systemImage: "exclamationmark.arrow.triangle.2.circlepath") { state.rerunFailedJobs(selectedRuns) }
-                    .disabled(!selectedRuns.contains(where: \.state.canRerunFailedJobs))
-                Button("Open", systemImage: "safari") { state.open(selectedRuns.map(\.htmlUrl)) }
-                    .disabled(selectedRuns.isEmpty)
-            } stats: {
-                let failing = scopedRuns.count(where: { $0.state == .failure })
-                Label("\(failing) failing", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(failing > 0 ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                Label("\(scopedRuns.count(where: \.state.isActive)) running", systemImage: "play.circle")
-                QuotaLabel()
             }
         }
         .confirmationDialog(
@@ -85,7 +82,7 @@ struct ActionsView: View {
         if !search.isEmpty {
             ContentUnavailableView.search(text: search)
         } else if state.isRefreshing && state.lastUpdated == nil {
-            ProgressView("Loading workflow runs…")
+            SkeletonRows().frame(maxHeight: .infinity, alignment: .top)
         } else {
             ContentUnavailableView(
                 filter == .all ? "No Workflow Runs" : "No \(filter.title) Workflows",
@@ -101,16 +98,13 @@ struct ActionsView: View {
 
     /// Runs in scope, before the status filter and search.
     private var scopedRuns: [WorkflowRun] {
-        repo.map { state.runsByRepo[$0] ?? [] } ?? state.latestRuns
+        state.latestRuns.filter { state.inScope($0.repo) }
     }
 
     private var visibleRuns: [WorkflowRun] {
         scopedRuns
             .filter(filter.matches)
-            .filter { run in
-                scope.matches(search, title: "\(run.workflowName) \(run.displayTitle)", repository: run.repo,
-                              person: run.actorName, other: [run.branchName, run.event])
-            }
+            .filter { matchesSearch(search, [$0.workflowName, $0.displayTitle, $0.repo, $0.actorName, $0.branchName, $0.event]) }
             .sorted(using: sortOrder)
     }
 

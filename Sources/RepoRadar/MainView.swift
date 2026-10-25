@@ -1,65 +1,79 @@
 import SwiftUI
 
-enum SidebarItem: Hashable {
-    case inbox, pulls, actions
-    case repo(String)
+/// The four pages, organized by intent rather than by data source (spec §1).
+enum Page: String, CaseIterable, Identifiable {
+    case now, inbox, pulls, actions
+
+    var id: Self { self }
 
     var title: String {
         switch self {
+        case .now: "Now"
         case .inbox: "Inbox"
         case .pulls: "Pull Requests"
         case .actions: "Actions"
-        case .repo(let repo): repo
         }
+    }
+
+    var symbol: String {
+        switch self {
+        case .now: "waveform.path.ecg"
+        case .inbox: "tray"
+        case .pulls: "arrow.triangle.pull"
+        case .actions: "bolt.circle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .now: Theme.Nav.now
+        case .inbox: Theme.Nav.inbox
+        case .pulls: Theme.Nav.pulls
+        case .actions: Theme.Nav.actions
+        }
+    }
+
+    /// ⌘1–⌘4.
+    var shortcut: KeyEquivalent {
+        KeyEquivalent(Character("\(Page.allCases.firstIndex(of: self)! + 1)"))
     }
 }
 
 struct MainView: View {
     @Environment(AppState.self) private var state
-    @AppStorage("detailLayout") private var layout: DetailLayout = .bottom
-    @State private var selection: SidebarItem? = .inbox
+    @SceneStorage("page") private var page: Page = .now
     @State private var search = ""
-    @State private var scope: SearchScope = .all
-    @State private var sidebarFilter = ""
-    @FocusState private var focus: FocusTarget?
 
     var body: some View {
+        @Bindable var state = state
         NavigationSplitView {
-            Sidebar(selection: $selection, filter: $sidebarFilter, focus: $focus)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 340)
+            Sidebar(page: $page)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 248, max: 320)
         } detail: {
-            detail
-                .navigationTitle(selection?.title ?? "RepoRadar")
+            content
+                .navigationTitle(page.title)
+                .toolbar { toolbar }
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ToolbarStatus(selection: $selection)
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                RefreshButton()
-                layoutButton(.bottom, title: "Detail Below", symbol: "rectangle.bottomhalf.inset.filled")
-                layoutButton(.right, title: "Detail on Right", symbol: "rectangle.righthalf.inset.filled")
-            }
+        .onChange(of: page) { search = "" }
+        .onChange(of: state.requestedPage, initial: true) {
+            guard let requested = state.requestedPage else { return }
+            page = requested
+            state.requestedPage = nil
         }
-        .focusedSceneValue(\.sidebarSelection, $selection)
-        .onChange(of: state.requestedSection, initial: true) {
-            guard let requested = state.requestedSection else { return }
-            selection = requested
-            state.requestedSection = nil
-        }
-        .focusedSceneValue(\.focusTarget, Binding(get: { focus }, set: { focus = $0 }))
+        .focusedSceneValue(\.page, $page)
     }
 
-    @ViewBuilder private var detail: some View {
+    @ViewBuilder private var content: some View {
         if state.hasToken {
             Group {
-                switch selection {
-                case .inbox, nil: InboxView(search: $search, scope: $scope, focus: $focus)
-                case .pulls: PullsView(search: $search, scope: $scope, focus: $focus)
-                case .actions: ActionsView(repo: nil, search: $search, scope: $scope, focus: $focus)
-                case .repo(let repo): ActionsView(repo: repo, search: $search, scope: $scope, focus: $focus).id(repo)
+                switch page {
+                case .now: NowView()
+                case .inbox: InboxView(search: search)
+                case .pulls: PullsView(search: search)
+                case .actions: ActionsView(search: search)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let error = state.error {
                     ErrorBanner(message: error) { state.error = nil }
@@ -71,11 +85,44 @@ struct MainView: View {
         }
     }
 
-    /// Selecting the active layout again hides the detail pane, like the layout buttons in Rockxy.
-    private func layoutButton(_ option: DetailLayout, title: String, symbol: String) -> some View {
-        Button(title, systemImage: symbol) { layout = layout == option ? .hidden : option }
-            .foregroundStyle(layout == option ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
-            .help(layout == option ? "Hide Detail Pane" : title)
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        if let repo = state.scopeRepo {
+            ToolbarItem(placement: .navigation) {
+                ScopeTag(repo: repo) { state.scopeRepo = nil }
+            }
+            .sharedBackgroundVisibility(.hidden)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            SearchField(prompt: SearchField.toolbarPrompt, text: $search)
+                .frame(width: 280)
+        }
+        .sharedBackgroundVisibility(.hidden)
+        ToolbarItem(placement: .primaryAction) {
+            RefreshButton()
+        }
+    }
+}
+
+/// The toolbar's "filtered to this repository" tag (G7); clearing it shows everything again.
+private struct ScopeTag: View {
+    let repo: String
+    let clear: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RepoSquare(repo: repo, size: 16)
+            Text(repo).textStyle(.label).foregroundStyle(Theme.Ink.primary)
+            Button("Show All Repositories", systemImage: "xmark", action: clear)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Theme.Ink.secondary)
+                .help("Show all repositories")
+        }
+        .padding(.leading, 3)
+        .padding(.trailing, 9)
+        .frame(height: 24)
+        .background(Theme.Fill.subtle, in: .capsule)
     }
 }
 
@@ -91,53 +138,243 @@ struct RefreshButton: View {
     }
 }
 
-/// The centered status pill: who is signed in, what's being watched, and what needs attention.
-struct ToolbarStatus: View {
+// MARK: - Sidebar
+
+struct Sidebar: View {
     @Environment(AppState.self) private var state
-    @Binding var selection: SidebarItem?
+    @Binding var page: Page
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Page.allCases) { item in
+                        NavRow(page: item, isSelected: page == item, badge: badge(for: item)) { page = item }
+                    }
+                    PinnedRepos()
+                        .padding(.top, 16)
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 4)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            SyncStatusButton(page: $page)
+        }
+    }
+
+    /// Now in blue, failures in red, the rest gray; nothing at 0.
+    private func badge(for page: Page) -> (count: Int, tone: Tone)? {
+        let (count, tone): (Int, Tone) = switch page {
+        case .now: (state.needsYouCount, .blue)
+        case .inbox: (state.scopedUnreadCount, .neutral)
+        case .pulls: (state.scopedPullCount, .neutral)
+        case .actions: (state.scopedFailingCount, .red)
+        }
+        return count > 0 ? (count, tone) : nil
+    }
+}
+
+private struct NavRow: View {
+    let page: Page
+    let isSelected: Bool
+    let badge: (count: Int, tone: Tone)?
+    let select: () -> Void
+    @Environment(\.appearsActive) private var appearsActive
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 10) {
+                Image(systemName: page.symbol)
+                    .font(.system(size: 16))
+                    .foregroundStyle(appearsActive ? page.color : Theme.Ink.tertiary)
+                    .frame(width: 20)
+                Text(page.title)
+                    .textStyle(.rowTitle)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(Theme.Ink.primary)
+                Spacer(minLength: 4)
+                if let badge { Badge(count: badge.count, tone: badge.tone) }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .background(isSelected ? Theme.Selection.nav : isHovered ? Theme.Fill.hover : .clear,
+                        in: .rect(cornerRadius: Theme.Radius.nav))
+            .contentShape(.rect(cornerRadius: Theme.Radius.nav))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help("\(page.title) (⌘\(page.shortcut.character))")
+        .accessibilityLabel(badge.map { "\(page.title), \($0.count)" } ?? page.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Pinned repositories (N2): click to filter every page to one, drag to reorder, right-click to unpin.
+private struct PinnedRepos: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("Pinned repositories").textStyle(.label).foregroundStyle(Theme.Ink.tertiary)
+                Spacer()
+                Menu {
+                    ForEach(state.repos.filter { !state.pinnedRepos.contains($0) }, id: \.self) { repo in
+                        Button(repo) { state.pin(repo) }
+                    }
+                } label: {
+                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(Theme.Ink.tertiary)
+                .disabled(state.pinnedRepos.count >= AppState.maxPins || state.repos.isEmpty)
+                .help(state.pinnedRepos.count >= AppState.maxPins ? "Up to \(AppState.maxPins) repositories can be pinned" : "Pin a repository")
+                .accessibilityLabel("Pin a repository")
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
+
+            if state.pinnedRepos.isEmpty {
+                Text("Pin up to \(AppState.maxPins) repositories with +. Selecting one filters every page.")
+                    .textStyle(.meta)
+                    .foregroundStyle(Theme.Ink.tertiary)
+                    .padding(.horizontal, 8)
+            }
+            ForEach(state.pinnedRepos, id: \.self) { repo in
+                PinnedRow(repo: repo)
+            }
+        }
+    }
+}
+
+private struct PinnedRow: View {
+    @Environment(AppState.self) private var state
+    let repo: String
+    @State private var isHovered = false
+
+    var body: some View {
+        let isSelected = state.scopeRepo == repo
+        Button { state.scopeRepo = isSelected ? nil : repo } label: {
+            HStack(spacing: 8) {
+                RepoSquare(repo: repo)
+                Text(repo.split(separator: "/").last.map(String.init) ?? repo)
+                    .textStyle(.rowTitle)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(Theme.Ink.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                RunCells(runs: state.defaultBranchRuns(of: repo), count: 6)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(isSelected ? Theme.Selection.nav : isHovered ? Theme.Fill.hover : .clear,
+                        in: .rect(cornerRadius: Theme.Radius.nav))
+            .contentShape(.rect(cornerRadius: Theme.Radius.nav))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(repo)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint(isSelected ? "Shows all repositories again" : "Filters every page to this repository")
+        .draggable(repo)
+        .dropDestination(for: String.self) { items, _ in
+            guard let moved = items.first else { return false }
+            state.movePin(moved, to: repo)
+            return true
+        }
+        .contextMenu {
+            Button("Unpin from Sidebar", systemImage: "pin.slash") { state.unpin(repo) }
+            Button("Open on GitHub", systemImage: "safari") { state.open([URL(string: "https://github.com/\(repo)")!]) }
+        }
+    }
+}
+
+/// Live / Syncing / Rate limited / Offline / Sign in again, plus the API quota (N3). Opens the status popover.
+private struct SyncStatusButton: View {
+    @Environment(AppState.self) private var state
+    @Binding var page: Page
     @State private var showDetails = false
 
     var body: some View {
+        let status = state.syncStatus
         Button { showDetails.toggle() } label: {
-            HStack(spacing: 8) {
-                StatusDot(color: dotColor)
-                Text(summary).lineLimit(1)
-                if state.failingCount > 0 {
-                    StatusPill(text: "\(state.failingCount) Failing", color: .red)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle().fill(status.tone.solid).frame(width: 7, height: 7)
+                    Text(status.title).textStyle(.label).foregroundStyle(Theme.Ink.primary)
+                    detail(status).textStyle(.meta).foregroundStyle(Theme.Ink.secondary).lineLimit(1)
+                }
+                if let limit = state.rateLimit {
+                    HStack(spacing: 8) {
+                        QuotaBar(limit: limit)
+                        Text("\(limit.remaining.formatted()) / \(limit.limit.formatted())")
+                            .textStyle(.meta)
+                            .foregroundStyle(Theme.Ink.tertiary)
+                            .fixedSize()
+                    }
+                    .help("GitHub API requests left this hour")
                 }
             }
-            .themeFont(.callout)
-            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showDetails, arrowEdge: .bottom) {
-            StatusPopover(selection: $selection)
+        .popover(isPresented: $showDetails, arrowEdge: .top) {
+            StatusPopover(page: $page)
         }
         .help("Account and sync status")
     }
 
-    private var dotColor: Color {
-        if !state.hasToken || state.error != nil { return .red }
-        return state.isRefreshing ? .orange : .green
+    private func detail(_ status: SyncStatus) -> Text {
+        switch status {
+        case .rateLimited(let until?):
+            Text("· until \(until.formatted(date: .omitted, time: .shortened))")
+        case .signInAgain:
+            Text("· open Settings")
+        default:
+            if let date = state.lastUpdated {
+                Text("· synced \(Text(date, style: .relative)) ago")
+            } else {
+                Text("")
+            }
+        }
     }
+}
 
-    private var summary: String {
-        guard state.hasToken else { return "RepoRadar | Signed out" }
-        let who = state.login.map { "@\($0)" } ?? "…"
-        let activity = state.isRefreshing ? "Updating" : "\(state.repos.count) repositories"
-        return "RepoRadar | \(who) | \(activity)"
+private struct QuotaBar: View {
+    let limit: RateLimit
+
+    var body: some View {
+        let fraction = Double(limit.remaining) / Double(max(limit.limit, 1))
+        GeometryReader { proxy in
+            Capsule().fill(Theme.Fill.subtle)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(fraction < 0.05 ? Tone.red.solid : fraction < 0.2 ? Tone.amber.solid : Theme.Ink.tertiary)
+                        .frame(width: proxy.size.width * fraction)
+                }
+        }
+        .frame(height: 3)
+        .accessibilityHidden(true)
     }
 }
 
 struct StatusPopover: View {
     @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
-    @Binding var selection: SidebarItem?
+    @Binding var page: Page
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
                 GridRow { Text("Account").foregroundStyle(.secondary); Text(state.login.map { "@\($0)" } ?? "—") }
+                GridRow { Text("Status").foregroundStyle(.secondary); Text(state.syncStatus.title) }
                 GridRow {
                     Text("Last update").foregroundStyle(.secondary)
                     Text(state.lastUpdated?.formatted(date: .omitted, time: .standard) ?? "—")
@@ -146,120 +383,36 @@ struct StatusPopover: View {
                     Text("API quota").foregroundStyle(.secondary)
                     Text(state.rateLimit.map { "\($0.remaining) / \($0.limit) left this hour" } ?? "—")
                 }
+                if let reset = state.rateLimit?.reset {
+                    GridRow { Text("Quota resets").foregroundStyle(.secondary); Text(reset.formatted(date: .omitted, time: .shortened)) }
+                }
                 GridRow { Text("Unread").foregroundStyle(.secondary); Text("\(state.unreadCount)") }
                 GridRow { Text("Review requests").foregroundStyle(.secondary); Text("\(state.reviewRequestCount)") }
                 GridRow { Text("Failing workflows").foregroundStyle(.secondary); Text("\(state.failingCount)") }
             }
             .monospacedDigit()
             if let error = state.error {
-                Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                Text(error).foregroundStyle(Tone.red.text).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 if state.failingCount > 0 {
                     Button("Show Failing") {
-                        selection = .actions
+                        page = .actions
                         dismiss()
                     }
+                    .buttonStyle(.secondary)
                 }
                 Spacer()
-                SettingsLink { Text("Settings…") }
+                SettingsLink { Text("Settings…") }.buttonStyle(.ghost)
                 Button("Refresh Now") { Task { await state.refresh() } }
+                    .buttonStyle(.primary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(state.isRefreshing || !state.hasToken)
             }
         }
-        .themeFont(.callout)
+        .textStyle(.meta)
         .padding(16)
         .frame(width: 340)
-    }
-}
-
-struct Sidebar: View {
-    @Environment(AppState.self) private var state
-    @Binding var selection: SidebarItem?
-    @Binding var filter: String
-    var focus: FocusState<FocusTarget?>.Binding
-    @State private var collapsedOwners: Set<String> = []
-
-    var body: some View {
-        List(selection: $selection) {
-            Section("GitHub") {
-                Label("Inbox", systemImage: "tray")
-                    .badge(state.unreadCount)
-                    .tag(SidebarItem.inbox)
-                Label("Pull Requests", systemImage: "arrow.triangle.pull")
-                    .badge(state.reviewRequestCount)
-                    .tag(SidebarItem.pulls)
-                Label("Actions", systemImage: "bolt.circle")
-                    .badge(state.failingCount)
-                    .tag(SidebarItem.actions)
-            }
-            Section("Repositories") {
-                ForEach(owners, id: \.self) { owner in
-                    DisclosureGroup(isExpanded: expandedBinding(owner)) {
-                        ForEach(repos(of: owner), id: \.self) { repo in
-                            RepoRow(repo: repo, latest: state.runsByRepo[repo]?.latestPerWorkflow() ?? [])
-                                .tag(SidebarItem.repo(repo))
-                        }
-                    } label: {
-                        Label(owner, systemImage: "person.2")
-                            .badge(repos(of: owner).count)
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "line.3.horizontal.decrease.circle").foregroundStyle(.secondary)
-                TextField("Filter (⇧⌘F)", text: $filter)
-                    .textFieldStyle(.plain)
-                    .focused(focus, equals: .sidebarFilter)
-                    .onExitCommand { filter = "" }
-            }
-            .themeFont(.callout)
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .padding(8)
-        }
-    }
-
-    private func repos(of owner: String) -> [String] {
-        state.repos.filter { repo in
-            repo.hasPrefix(owner + "/") && (filter.isEmpty || repo.localizedCaseInsensitiveContains(filter))
-        }
-    }
-
-    private var owners: [String] {
-        Array(Set(state.repos.compactMap { $0.split(separator: "/").first.map(String.init) }))
-            .filter { !repos(of: $0).isEmpty }
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-    }
-
-    private func expandedBinding(_ owner: String) -> Binding<Bool> {
-        Binding(
-            get: { !filter.isEmpty || !collapsedOwners.contains(owner) },
-            set: { if $0 { collapsedOwners.remove(owner) } else { collapsedOwners.insert(owner) } }
-        )
-    }
-}
-
-struct RepoRow: View {
-    let repo: String
-    let latest: [WorkflowRun]
-
-    var body: some View {
-        let overall = latest.overall
-        Label {
-            Text(repo.split(separator: "/").last.map(String.init) ?? repo).lineLimit(1)
-        } icon: {
-            Image(systemName: overall?.symbol ?? "circle")
-                .foregroundStyle(overall?.color ?? .secondary)
-        }
-        .badge(latest.count(where: { $0.state == .failure }))
-        .help(repo)
-        .accessibilityLabel("\(repo), \(overall?.label ?? "no runs")")
     }
 }
 
@@ -277,7 +430,7 @@ struct SignInPrompt: View {
     }
 }
 
-/// Floating Liquid Glass banner above the workspace for refresh or action errors.
+/// Dismissible banner under the toolbar for refresh or action errors; data already shown stays.
 struct ErrorBanner: View {
     let message: String
     let dismiss: () -> Void
@@ -285,7 +438,7 @@ struct ErrorBanner: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(Tone.red.solid)
                 .accessibilityHidden(true)
             Text(message)
                 .textSelection(.enabled)
@@ -293,10 +446,10 @@ struct ErrorBanner: View {
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.Ink.secondary)
         }
-        .themeFont(.callout)
+        .textStyle(.meta)
         .padding(10)
-        .glassEffect(.regular.tint(.red.opacity(0.2)), in: .rect(cornerRadius: 10))
+        .glassEffect(.regular.tint(Tone.red.tint), in: .rect(cornerRadius: 10))
     }
 }

@@ -4,10 +4,14 @@ import Security
 struct RateLimit: Hashable {
     let remaining: Int
     let limit: Int
+    /// When the quota refills.
+    var reset: Date?
 }
 
 struct GitHubError: LocalizedError {
     let message: String
+    /// HTTP status, when the error came from a response.
+    var status: Int?
     var errorDescription: String? { message }
 }
 
@@ -67,7 +71,7 @@ actor GitHubClient {
     @discardableResult
     private func send(_ path: String, query: [String: String] = [:], method: String = "GET") async throws -> Data {
         guard let token = Keychain.load(), !token.isEmpty else {
-            throw GitHubError(message: "Not signed in to GitHub. Sign in from Settings (⌘,).")
+            throw GitHubError(message: "Not signed in to GitHub. Sign in from Settings (⌘,).", status: 401)
         }
         var components = URLComponents(string: "https://api.github.com" + path)!
         if !query.isEmpty { components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
@@ -86,13 +90,14 @@ actor GitHubClient {
         if let http = response as? HTTPURLResponse, http.value(forHTTPHeaderField: "X-RateLimit-Resource") == "core",
            let remaining = Int(http.value(forHTTPHeaderField: "X-RateLimit-Remaining") ?? ""),
            let limit = Int(http.value(forHTTPHeaderField: "X-RateLimit-Limit") ?? "") {
-            rateLimit = RateLimit(remaining: remaining, limit: limit)
+            let reset = Double(http.value(forHTTPHeaderField: "X-RateLimit-Reset") ?? "").map(Date.init(timeIntervalSince1970:))
+            rateLimit = RateLimit(remaining: remaining, limit: limit, reset: reset)
         }
         let code = (response as? HTTPURLResponse)?.statusCode ?? -1
         if code == 304, let cached = cache[url] { return cached.data }
         guard (200..<300).contains(code) else {
             let message = (try? JSONDecoder().decode([String: String].self, from: data))?["message"]
-            throw GitHubError(message: "GitHub HTTP \(code): \(message ?? String(decoding: data, as: UTF8.self))")
+            throw GitHubError(message: "GitHub HTTP \(code): \(message ?? String(decoding: data, as: UTF8.self))", status: code)
         }
         if method == "GET", let etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag") {
             cache[url] = (etag, data)

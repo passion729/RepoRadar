@@ -38,8 +38,22 @@ final class AppState {
     private(set) var rateLimit: RateLimit?
     private(set) var hasToken = Keychain.load() != nil
     var error: String?
-    /// Set by the menu bar extra to jump the main window to a section.
-    var requestedSection: SidebarItem?
+    /// Why the last sync failed, if it did; cleared by the next successful one.
+    private(set) var failure: SyncFailure?
+    /// Set by the menu bar extra to jump the main window to a page.
+    var requestedPage: Page?
+
+    // MARK: Scope
+
+    /// Each watched repository's default branch, from the repository list.
+    private(set) var defaultBranches: [String: String] = [:]
+    /// Repositories pinned to the sidebar, in the user's order (at most `maxPins`).
+    private(set) var pinnedRepos = UserDefaults.standard.stringArray(forKey: "pinnedRepos") ?? [] {
+        didSet { defaults.set(pinnedRepos, forKey: "pinnedRepos") }
+    }
+    static let maxPins = 8
+    /// The pinned repository every page is filtered to, or nil for all.
+    var scopeRepo: String?
 
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
     /// Ids seen at the last refresh; nil until the first load so launching doesn't notify about old items.
@@ -59,6 +73,50 @@ final class AppState {
     var failingCount: Int { latestRuns.count(where: needsAttention) }
     var unreadCount: Int { notifications.count(where: \.unread) }
     var reviewRequestCount: Int { pulls.count(where: needsAttention) }
+
+    var syncStatus: SyncStatus {
+        SyncStatus(hasToken: hasToken, isRefreshing: isRefreshing, failure: failure, rateLimit: rateLimit)
+    }
+
+    // MARK: Scoped counts (sidebar)
+
+    func inScope(_ repo: String) -> Bool { scopeRepo == nil || scopeRepo == repo }
+
+    // ponytail: interim Now count (review requests + failing workflows) until the Needs-you engine lands in phase 3.
+    var needsYouCount: Int {
+        latestRuns.count { inScope($0.repo) && needsAttention($0) } + pulls.count { inScope($0.repo) && needsAttention($0) }
+    }
+    var scopedUnreadCount: Int { notifications.count { $0.unread && inScope($0.repo) } }
+    /// Pull requests waiting on your review plus your own.
+    var scopedPullCount: Int {
+        pulls.count { inScope($0.repo) && ($0.roles.contains(.authored) || ($0.roles.contains(.reviewRequested) && !$0.pr.isDraft)) }
+    }
+    var scopedFailingCount: Int { latestRuns.count { inScope($0.repo) && $0.state == .failure } }
+
+    /// A repository's runs on its default branch, oldest first.
+    func defaultBranchRuns(of repo: String) -> [WorkflowRun] {
+        let runs = runsByRepo[repo] ?? []
+        let branch = defaultBranches[repo]
+        return runs.filter { branch == nil || $0.headBranch == branch }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    // MARK: Pins
+
+    func pin(_ repo: String) {
+        guard !pinnedRepos.contains(repo), pinnedRepos.count < Self.maxPins else { return }
+        pinnedRepos.append(repo)
+    }
+
+    func unpin(_ repo: String) {
+        pinnedRepos.removeAll { $0 == repo }
+        if scopeRepo == repo { scopeRepo = nil }
+    }
+
+    /// Moves a pinned repository to where `target` is.
+    func movePin(_ repo: String, to target: String) {
+        guard repo != target, let from = pinnedRepos.firstIndex(of: repo), let to = pinnedRepos.firstIndex(of: target) else { return }
+        pinnedRepos.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+    }
 
     /// A failure or review request that hasn't been viewed yet.
     func needsAttention(_ run: WorkflowRun) -> Bool { run.state == .failure && !seen.contains(run.seenKey) }
@@ -111,7 +169,8 @@ final class AppState {
             async let runs = fetchRuns()
             async let inbox = client.notifications()
             async let prs = fetchPulls()
-            let (newRuns, newInbox, newPulls) = try await (runs, inbox, prs)
+            let ((newRuns, branches), newInbox, newPulls) = try await (runs, inbox, prs)
+            defaultBranches = branches
             runsByRepo = newRuns
             pulls = newPulls
             let current = Set(newRuns.values.joined().map(\.seenKey) + newPulls.map(\.seenKey))
@@ -120,9 +179,12 @@ final class AppState {
             lastUpdated = Date()
             rateLimit = await client.rateLimit
             error = nil
+            failure = nil
             publishFailures()
         } catch {
             self.error = error.localizedDescription
+            failure = SyncFailure(error)
+            rateLimit = await client.rateLimit
         }
     }
 
@@ -180,13 +242,22 @@ final class AppState {
     }
 
     private func refreshInbox() async {
-        guard hasToken, !isRefreshing, let inbox = try? await client.notifications() else { return }
-        apply(inbox)
+        guard hasToken, !isRefreshing else { return }
+        do {
+            apply(try await client.notifications())
+            failure = nil
+        } catch {
+            failure = SyncFailure(error)
+        }
+        rateLimit = await client.rateLimit
     }
 
-    private func fetchRuns() async throws -> [String: [WorkflowRun]] {
+    /// Runs per repository, and each repository's default branch.
+    private func fetchRuns() async throws -> ([String: [WorkflowRun]], [String: String]) {
         let days = max(1, defaults.integer(forKey: "lookbackDays"))
         let repos = try await client.repos(pushedSince: Date().addingTimeInterval(-Double(days) * 86_400))
+        let branches = Dictionary(repos.compactMap { repo in repo.defaultBranch.map { (repo.fullName, $0) } },
+                                  uniquingKeysWith: { first, _ in first })
         var result: [String: [WorkflowRun]] = [:]
         // ponytail: fixed batches of 8 concurrent requests; use a sliding window if hundreds of repos make this slow
         for start in stride(from: 0, to: repos.count, by: 8) {
@@ -198,7 +269,7 @@ final class AppState {
                 for await (name, runs) in group where !runs.isEmpty { result[name] = runs }
             }
         }
-        return result
+        return (result, branches)
     }
 
     /// One search per role, merged so a PR you authored and were mentioned on appears once with both roles.
@@ -318,6 +389,8 @@ final class AppState {
         hasToken = false
         login = nil
         error = nil
+        failure = nil
+        scopeRepo = nil
         runsByRepo = [:]
         notifications = []
         pulls = []
@@ -369,5 +442,69 @@ final class AppState {
         content.sound = .default
         content.userInfo = ["url": url.absoluteString]
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+    }
+}
+
+// MARK: - Sync status
+
+/// Why a sync failed, as far as the status indicator cares.
+enum SyncFailure: Equatable {
+    case offline, unauthorized, rateLimited, other
+
+    init(_ error: Error) {
+        if let error = error as? URLError,
+           [.notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost,
+            .dnsLookupFailed, .timedOut, .dataNotAllowed].contains(error.code) {
+            self = .offline
+        } else if let error = error as? GitHubError, let status = error.status {
+            if status == 401 {
+                self = .unauthorized
+            } else if [403, 429].contains(status), error.message.localizedCaseInsensitiveContains("rate limit") {
+                self = .rateLimited
+            } else {
+                self = .other
+            }
+        } else {
+            self = .other
+        }
+    }
+}
+
+/// The five states shown at the bottom of the sidebar (N3), most serious first.
+enum SyncStatus: Equatable {
+    case signInAgain, offline, rateLimited(until: Date?), syncing, live
+
+    init(hasToken: Bool, isRefreshing: Bool, failure: SyncFailure?, rateLimit: RateLimit?, now: Date = Date()) {
+        let exhausted = rateLimit.map { $0.remaining == 0 && ($0.reset ?? .distantFuture) > now } ?? false
+        if !hasToken || failure == .unauthorized {
+            self = .signInAgain
+        } else if failure == .offline {
+            self = .offline
+        } else if failure == .rateLimited || exhausted {
+            self = .rateLimited(until: rateLimit?.reset)
+        } else if isRefreshing {
+            self = .syncing
+        } else {
+            self = .live
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .signInAgain: "Sign in again"
+        case .offline: "Offline"
+        case .rateLimited: "Rate limited"
+        case .syncing: "Syncing"
+        case .live: "Live"
+        }
+    }
+
+    var tone: Tone {
+        switch self {
+        case .signInAgain: .red
+        case .offline: .neutral
+        case .rateLimited, .syncing: .amber
+        case .live: .green
+        }
     }
 }

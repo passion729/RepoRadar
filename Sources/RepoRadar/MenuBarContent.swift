@@ -58,9 +58,9 @@ final class MenuBarController: NSObject {
         }
     }
 
-    func show(_ section: SidebarItem?) {
+    func show(_ page: Page?) {
         close()
-        if let section { state.requestedSection = section }
+        if let page { state.requestedPage = page }
         openMainWindow?()
         NSApp.activate()
     }
@@ -117,7 +117,7 @@ private enum PanelTab: CaseIterable, Identifiable {
         }
     }
 
-    var section: SidebarItem {
+    var section: Page {
         switch self {
         case .failing, .running: .actions
         case .reviews: .pulls

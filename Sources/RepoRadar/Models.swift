@@ -4,6 +4,7 @@ struct Repo: Decodable, Hashable {
     let fullName: String
     let pushedAt: Date?
     let archived: Bool
+    let defaultBranch: String?
 }
 
 struct Actor: Decodable, Hashable { let login: String }

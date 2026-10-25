@@ -131,6 +131,25 @@ struct SearchField: View {
     @Binding var text: String
     var shortcut: String? = "⌘K"
 
+    static let toolbarPrompt = "Search or jump to…"
+
+    /// ⌘K: puts the cursor in the key window's toolbar search field.
+    /// Found through AppKit: a `FocusState` set from a menu command doesn't reach a field inside the toolbar.
+    @MainActor static func focusInKeyWindow() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              let field = textField(placeholder: toolbarPrompt, in: window.contentView?.superview) else { return }
+        window.makeFirstResponder(field)
+    }
+
+    @MainActor private static func textField(placeholder: String, in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.isEditable, field.placeholderString == placeholder { return field }
+        for subview in view.subviews {
+            if let field = textField(placeholder: placeholder, in: subview) { return field }
+        }
+        return nil
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")

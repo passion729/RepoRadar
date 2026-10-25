@@ -29,6 +29,8 @@ struct RepoRadarApp: App {
         Window("Component Gallery", id: "gallery") {
             ComponentGallery().appliesFontTheme()
         }
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         #endif
     }
 }

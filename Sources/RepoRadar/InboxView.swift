@@ -27,40 +27,30 @@ enum InboxFilter: String, CaseIterable, Identifiable {
 /// GitHub notifications, with Mail-style read / done handling.
 struct InboxView: View {
     @Environment(AppState.self) private var state
-    @Binding var search: String
-    @Binding var scope: SearchScope
-    var focus: FocusState<FocusTarget?>.Binding
+    let search: String
     @SceneStorage("inboxFilter") private var filter: InboxFilter = .unread
+    @SceneStorage("inboxListWidth") private var listWidth = 430.0
     @State private var selection: Set<GitHubNotification.ID> = []
     @State private var sortOrder = [KeyPathComparator(\GitHubNotification.updatedAt, order: .reverse)]
 
     var body: some View {
-        Workspace(search: $search, scope: $scope, focus: focus) {
-            FilterTabBar(selection: $filter, options: InboxFilter.allCases, title: \.title) { option in
-                state.notifications.count(where: option.matches)
+        SplitPane(size: $listWidth, range: 340...560, minFlexible: 360) {
+            VStack(spacing: 0) {
+                Segmented(selection: $filter, segments: InboxFilter.allCases.map { option in
+                    Segment(value: option, title: option.title, count: scopedItems.count(where: option.matches))
+                })
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                NotificationTable(items: visibleItems, selection: $selection, sortOrder: $sortOrder)
+                    .overlay { if visibleItems.isEmpty { emptyState } }
             }
-        } table: {
-            NotificationTable(items: visibleItems, selection: $selection, sortOrder: $sortOrder)
-                .overlay { if visibleItems.isEmpty { emptyState } }
-        } detail: {
+        } second: {
             if selectedItems.count == 1, let ref = selectedItems[0].ref {
                 IssueDetailView(ref: ref)
             } else if selectedItems.count == 1 {
                 NotificationDetail(item: selectedItems[0])
             } else {
                 DetailPlaceholder()
-            }
-        } status: {
-            StatusBar(selected: selectedItems.count, visible: visibleItems.count) {
-                Button("Mark as Read", systemImage: "envelope.open") { state.markRead(selectedItems) }
-                    .disabled(!selectedItems.contains(where: \.unread))
-                Button("Mark as Done", systemImage: "checkmark") { state.markDone(selectedItems) }
-                    .disabled(selectedItems.isEmpty)
-            } stats: {
-                Label("\(state.unreadCount) unread", systemImage: "circle.fill")
-                    .foregroundStyle(state.unreadCount > 0 ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                Label("\(state.notifications.count) total", systemImage: "tray")
-                QuotaLabel()
             }
         }
         .focusedSceneValue(\.selectedNotifications, selectedItems)
@@ -73,7 +63,7 @@ struct InboxView: View {
         if !search.isEmpty {
             ContentUnavailableView.search(text: search)
         } else if state.isRefreshing && state.lastUpdated == nil {
-            ProgressView("Loading notifications…")
+            SkeletonRows().frame(maxHeight: .infinity, alignment: .top)
         } else {
             ContentUnavailableView(
                 filter == .unread ? "All Caught Up" : "No Notifications",
@@ -83,10 +73,14 @@ struct InboxView: View {
         }
     }
 
+    private var scopedItems: [GitHubNotification] {
+        state.notifications.filter { state.inScope($0.repo) }
+    }
+
     private var visibleItems: [GitHubNotification] {
-        state.notifications
+        scopedItems
             .filter { filter.matches($0) || selection.contains($0.id) }  // keep a just-read selection visible
-            .filter { scope.matches(search, title: $0.title, repository: $0.repo, person: "", other: [$0.reasonLabel]) }
+            .filter { matchesSearch(search, [$0.title, $0.repo, $0.reasonLabel]) }
             .sorted(using: sortOrder)
     }
 

@@ -5,8 +5,7 @@ import SwiftUI
 private struct SelectedURLsKey: FocusedValueKey { typealias Value = [URL] }
 private struct SelectedRunsKey: FocusedValueKey { typealias Value = [WorkflowRun] }
 private struct SelectedNotificationsKey: FocusedValueKey { typealias Value = [GitHubNotification] }
-private struct SidebarSelectionKey: FocusedValueKey { typealias Value = Binding<SidebarItem?> }
-private struct FocusTargetKey: FocusedValueKey { typealias Value = Binding<FocusTarget?> }
+private struct PageKey: FocusedValueKey { typealias Value = Binding<Page> }
 
 extension FocusedValues {
     var selectedURLs: [URL]? {
@@ -24,14 +23,9 @@ extension FocusedValues {
         set { self[SelectedNotificationsKey.self] = newValue }
     }
 
-    var focusTarget: Binding<FocusTarget?>? {
-        get { self[FocusTargetKey.self] }
-        set { self[FocusTargetKey.self] = newValue }
-    }
-
-    var sidebarSelection: Binding<SidebarItem?>? {
-        get { self[SidebarSelectionKey.self] }
-        set { self[SidebarSelectionKey.self] = newValue }
+    var page: Binding<Page>? {
+        get { self[PageKey.self] }
+        set { self[PageKey.self] = newValue }
     }
 }
 
@@ -40,20 +34,15 @@ struct AppCommands: Commands {
     @FocusedValue(\.selectedURLs) private var selectedURLs
     @FocusedValue(\.selectedRuns) private var selectedRuns
     @FocusedValue(\.selectedNotifications) private var selectedNotifications
-    @FocusedBinding(\.sidebarSelection) private var sidebarSelection
-    @FocusedBinding(\.focusTarget) private var focusTarget
-    @AppStorage("detailLayout") private var layout: DetailLayout = .bottom
+    @FocusedBinding(\.page) private var page
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         SidebarCommands()
 
-        // Find focuses the in-content search row; ⇧⌘F filters the sidebar, as in Rockxy.
         CommandGroup(replacing: .textEditing) {
-            Button("Find…") { focusTarget = .search }
-                .keyboardShortcut("f")
-            Button("Filter Sidebar") { focusTarget = .sidebarFilter }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
+            Button("Search or Jump To…") { SearchField.focusInKeyWindow() }
+                .keyboardShortcut("k")
         }
 
         CommandGroup(after: .newItem) {
@@ -62,20 +51,15 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
-            ForEach([SidebarItem.inbox, .pulls, .actions], id: \.self) { item in
-                Toggle(item.title, isOn: Binding(get: { sidebarSelection == item }, set: { _ in sidebarSelection = item }))
+            ForEach(Page.allCases) { item in
+                Toggle(item.title, isOn: Binding(get: { page == item }, set: { _ in page = item }))
                     .keyboardShortcut(item.shortcut)
+                    .disabled(page == nil)
             }
             Divider()
             Button("Refresh") { Task { await state.refresh() } }
                 .keyboardShortcut("r")
                 .disabled(state.isRefreshing || !state.hasToken)
-            Divider()
-            Picker("Detail Pane", selection: $layout) {
-                Text("Below").tag(DetailLayout.bottom)
-                Text("On the Right").tag(DetailLayout.right)
-                Text("Hidden").tag(DetailLayout.hidden)
-            }
             Divider()
         }
 
@@ -94,15 +78,5 @@ struct AppCommands: Commands {
             Button("Component Gallery") { openWindow(id: "gallery") }
         }
         #endif
-    }
-}
-
-private extension SidebarItem {
-    var shortcut: KeyEquivalent {
-        switch self {
-        case .inbox: "1"
-        case .pulls: "2"
-        default: "3"
-        }
     }
 }
