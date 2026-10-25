@@ -83,7 +83,7 @@ Releases are published from a Mac that has the team certificate, not from CI, so
 
 It runs the tests, builds and signs the app, packs a DMG, tags the current commit `v1.1` and creates the GitHub release with install notes. Then it signs the DMG with the Sparkle EdDSA key, adds it to `appcast.xml` and pushes that to `main`, where installed copies look for updates. CI only tests and builds pull requests and `main`.
 
-The EdDSA private key is in the login Keychain under the account `RepoRadar` (Sparkle's `generate_keys --account RepoRadar`); its public half is `SUPublicEDKey` in `build.sh`. Without the private key no update can be published, so keep a backup. Debug builds never update themselves.
+The EdDSA private key is `SPARKLE_ED_PRIVATE_KEY` in the Infisical project RepoRadar (prod), so `release.sh` needs `infisical login`; a copy also sits in the login Keychain under the account `RepoRadar`. Its public half is `SUPublicEDKey` in `build.sh`. Without the private key no update can be published. Debug builds never update themselves.
 
 ## Signing in
 

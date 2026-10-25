@@ -3,8 +3,9 @@
 # Signs with the Yuanju Bo team certificate, so every version keeps the same signature and the
 # Keychain keeps trusting the app across updates. Then packs a drag-to-install DMG, tags the
 # current commit and creates the GitHub release. Not notarized: the notes say how to open it.
-# Last, signs the DMG with the Sparkle EdDSA key (login Keychain, account "RepoRadar") into
-# appcast.xml and pushes it to main, where installed copies look for updates.
+# Last, signs the DMG with the Sparkle EdDSA key (Infisical project RepoRadar, prod,
+# SPARKLE_ED_PRIVATE_KEY; needs `infisical login`) into appcast.xml and pushes it to main,
+# where installed copies look for updates.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -21,8 +22,8 @@ git fetch -q origin
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
   || { echo "release from main, pushed and in sync with origin/main"; exit 1; }
 ! git ls-remote --exit-code --tags origin "$TAG" >/dev/null || { echo "$TAG already exists"; exit 1; }
-"$SPARKLE_BIN/generate_keys" --account RepoRadar -p >/dev/null 2>&1 \
-  || { echo "no Sparkle key for account RepoRadar in the login Keychain"; exit 1; }
+KEY=$(infisical secrets get SPARKLE_ED_PRIVATE_KEY --plain --silent --env prod)
+[ -n "$KEY" ] || { echo "no SPARKLE_ED_PRIVATE_KEY from Infisical (infisical login?)"; exit 1; }
 
 ./test.sh
 VERSION="$VERSION" SIGN_IDENTITY="$IDENTITY" ./build.sh release
@@ -38,7 +39,7 @@ hdiutil create -quiet -volname RepoRadar -srcfolder "$STAGE/dmg" -format UDZO "$
 gh release create "$TAG" "$DMG" --target "$(git rev-parse HEAD)" --title "RepoRadar $VERSION" --generate-notes \
   --notes "RepoRadar isn't notarized. On first launch, dismiss the warning, then click **Open Anyway** in System Settings → Privacy & Security, or run \`xattr -dr com.apple.quarantine /Applications/RepoRadar.app\`."
 # Only the new DMG in the folder: generate_appcast keeps the older entries already in appcast.xml.
-"$SPARKLE_BIN/generate_appcast" --account RepoRadar \
+echo "$KEY" | "$SPARKLE_BIN/generate_appcast" --ed-key-file - \
   --download-url-prefix "https://github.com/passion729/RepoRadar/releases/download/$TAG/" \
   -o appcast.xml "$STAGE/out"
 git add appcast.xml
