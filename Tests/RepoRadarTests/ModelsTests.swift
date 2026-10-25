@@ -249,3 +249,7 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
     // The graph point under the cursor before (260, 100) must still be under it after zooming.
     #expect(zoomed.width + 260 * 2 == anchor.x && zoomed.height + 100 * 2 == anchor.y)
 }
+
+@Test func badgeCapsAt99() {
+    #expect(Badge.text(0) == "0" && Badge.text(99) == "99" && Badge.text(100) == "99+")
+}

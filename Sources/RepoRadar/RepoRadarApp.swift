@@ -24,6 +24,12 @@ struct RepoRadarApp: App {
         Settings {
             SettingsView().environment(state).appliesFontTheme()
         }
+
+        #if DEBUG
+        Window("Component Gallery", id: "gallery") {
+            ComponentGallery().appliesFontTheme()
+        }
+        #endif
     }
 }
 

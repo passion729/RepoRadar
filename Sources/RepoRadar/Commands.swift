@@ -43,6 +43,7 @@ struct AppCommands: Commands {
     @FocusedBinding(\.sidebarSelection) private var sidebarSelection
     @FocusedBinding(\.focusTarget) private var focusTarget
     @AppStorage("detailLayout") private var layout: DetailLayout = .bottom
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         SidebarCommands()
@@ -87,6 +88,12 @@ struct AppCommands: Commands {
             RunActions(runs: selectedRuns ?? [])
                 .environment(state)
         }
+
+        #if DEBUG
+        CommandMenu("Debug") {
+            Button("Component Gallery") { openWindow(id: "gallery") }
+        }
+        #endif
     }
 }
 
