@@ -40,6 +40,20 @@ struct AppCommands: Commands {
     var body: some Commands {
         SidebarCommands()
 
+        // ⌘Z undoes the newest RepoRadar action while its undo window is open; otherwise it's the usual text undo.
+        CommandGroup(replacing: .undoRedo) {
+            Button(state.actions.canUndo ? "Undo Last Action" : "Undo") {
+                if state.actions.canUndo {
+                    state.actions.undoLast()
+                } else {
+                    NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+                }
+            }
+            .keyboardShortcut("z")
+            Button("Redo") { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
+
         CommandGroup(replacing: .textEditing) {
             Button("Search or Jump To…") { SearchField.focusInKeyWindow() }
                 .keyboardShortcut("k")

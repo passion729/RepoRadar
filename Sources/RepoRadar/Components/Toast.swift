@@ -63,7 +63,7 @@ private struct ToastHost: ViewModifier {
             if let toast = center.current {
                 ToastView(toast: toast) { center.dismiss() }
                     .id(toast.id)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 28)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -97,7 +97,6 @@ struct ToastView: View {
                 }
                 .buttonStyle(.secondary)
                 .controlSize(.small)
-                .modifier(OptionalShortcut(key: action.shortcut))
             }
         }
         .padding(.leading, 16)
@@ -107,13 +106,5 @@ struct ToastView: View {
         .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isStaticText)
-    }
-}
-
-private struct OptionalShortcut: ViewModifier {
-    let key: KeyEquivalent?
-
-    func body(content: Content) -> some View {
-        if let key { content.keyboardShortcut(key) } else { content }
     }
 }

@@ -41,6 +41,8 @@ struct WorkflowRun: Decodable, Identifiable, Hashable {
     var branchName: String { headBranch ?? "—" }
     var actorName: String { actor?.login ?? "—" }
     var state: RunState { RunState(status: status, conclusion: conclusion) }
+    /// Paused until someone reviews a protected environment.
+    var isAwaitingApproval: Bool { status == "waiting" }
     /// Changes when the run does (a re-run, or a run that finishes), so viewing it again is needed.
     var seenKey: String { "run-\(id)-\(updatedAt.timeIntervalSince1970)" }
 
@@ -213,6 +215,10 @@ enum PRRole: String, CaseIterable, Identifiable {
 struct PullItem: Identifiable, Hashable {
     let pr: PullRequest
     var roles: Set<PRRole>
+    /// Merge readiness, known for your own pull requests.
+    var status: PullStatus?
+    /// The review request names you, not only a team you're on.
+    var isDirectReview = false
 
     var id: Int { pr.id }
     var title: String { pr.title }
@@ -225,6 +231,46 @@ struct PullItem: Identifiable, Hashable {
     /// Changes with any new activity on the pull request, so viewing it again is needed.
     var seenKey: String { "pr-\(pr.id)-\(pr.updatedAt.timeIntervalSince1970)" }
     var rolesSummary: String { PRRole.allCases.filter(roles.contains).map(\.title).joined(separator: ", ") }
+}
+
+/// "owner/repo#number": the same key for an issue, a pull request and their notification threads.
+func subjectKey(_ repo: String, _ number: Int) -> String { "\(repo)#\(number)" }
+
+/// What GitHub's GraphQL API says about a pull request's readiness.
+struct PullStatus: Hashable {
+    enum Checks: Hashable {
+        case passing, failing, pending, none
+
+        init(rollup: String?) {
+            switch rollup {
+            case "SUCCESS": self = .passing
+            case "FAILURE", "ERROR": self = .failing
+            case "PENDING", "EXPECTED": self = .pending
+            default: self = .none
+            }
+        }
+    }
+
+    /// APPROVED, CHANGES_REQUESTED or REVIEW_REQUIRED.
+    let reviewDecision: String?
+    /// CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, HAS_HOOKS, DRAFT or UNKNOWN.
+    let mergeState: String?
+    let checks: Checks
+
+    /// Checks pass, enough approvals, no conflicts.
+    var isReadyToMerge: Bool { mergeState == "CLEAN" || mergeState == "HAS_HOOKS" }
+    var needsChanges: Bool { reviewDecision == "CHANGES_REQUESTED" || checks == .failing }
+}
+
+/// An environment a run is waiting on (GET …/pending_deployments).
+struct PendingDeployment: Decodable, Hashable {
+    struct Environment: Decodable, Hashable {
+        let id: Int
+        let name: String?
+    }
+
+    let environment: Environment
+    let currentUserCanApprove: Bool
 }
 
 struct IssueLabel: Decodable, Hashable {
@@ -303,6 +349,8 @@ struct GitHubNotification: Decodable, Identifiable, Hashable {
     var title: String { subject.title }
     /// Unread first when sorting ascending.
     var unreadRank: Int { unread ? 0 : 1 }
+
+    var subjectKey: String? { ref.map { RepoRadar.subjectKey($0.repo, $0.number) } }
 
     /// The issue or pull request this thread is about, parsed from `…/repos/{owner}/{repo}/{issues|pulls}/{n}`.
     var ref: IssueRef? {

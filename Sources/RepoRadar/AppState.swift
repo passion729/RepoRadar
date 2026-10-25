@@ -23,12 +23,36 @@ final class AppState {
 
     // MARK: Inbox & pull requests
 
-    private(set) var notifications: [GitHubNotification] = []
+    /// Every thread GitHub returned; `notifications` leaves out threads an action is about to mark done.
+    private(set) var inbox: [GitHubNotification] = []
+    var notifications: [GitHubNotification] {
+        hiddenThreads.isEmpty ? inbox : inbox.filter { !hiddenThreads.contains($0.id) }
+    }
     private(set) var pulls: [PullItem] = []
+    /// Environments waiting runs are blocked on, per run id.
+    private(set) var pendingDeployments: [Int: [PendingDeployment]] = [:]
     /// `seenKey`s of runs and pull requests the user has viewed; those stop counting as needing attention.
     private(set) var seen = Set(UserDefaults.standard.stringArray(forKey: "seenItems") ?? []) {
         didSet { defaults.set(Array(seen), forKey: "seenItems") }
     }
+
+    // MARK: Needs you (G3) and optimistic actions (G4)
+
+    let toasts: ToastCenter
+    let actions: ActionQueue
+    /// Revisions marked Done; an item comes back when something new happens on it.
+    private(set) var doneItems = Set(UserDefaults.standard.stringArray(forKey: "doneItems") ?? []) {
+        didSet { defaults.set(Array(doneItems), forKey: "doneItems") }
+    }
+    /// Item ids snoozed until a date.
+    private(set) var snoozedItems = UserDefaults.standard.dictionary(forKey: "snoozedItems") as? [String: Date] ?? [:] {
+        didSet { defaults.set(snoozedItems, forKey: "snoozedItems") }
+    }
+    /// Revisions and threads hidden while an action waits out its undo window or GitHub catches up.
+    private(set) var hiddenItems: Set<String> = []
+    private(set) var hiddenThreads: Set<String> = []
+    /// Item ids whose last action GitHub refused; the row is marked until it's acted on again.
+    private(set) var failedItems: Set<String> = []
 
     // MARK: Account & status
 
@@ -36,6 +60,8 @@ final class AppState {
     private(set) var lastUpdated: Date?
     private(set) var login: String?
     private(set) var rateLimit: RateLimit?
+    /// GitHub's requested notification poll interval, in seconds.
+    private(set) var pollInterval: Int?
     private(set) var hasToken = Keychain.load() != nil
     var error: String?
     /// Why the last sync failed, if it did; cleared by the next successful one.
@@ -76,6 +102,9 @@ final class AppState {
     private var canNotify: Bool { Bundle.main.bundleIdentifier != nil }  // `swift run` has no bundle
 
     init() {
+        let toasts = ToastCenter()
+        self.toasts = toasts
+        actions = ActionQueue(toasts: toasts)
         defaults.register(defaults: ["refreshMinutes": 5, "lookbackDays": 30, "notifyFailures": true, "notifyInbox": true, "notifyOwnActivity": false,
                                       "notifyFinishedRuns": true, "notifyStartedRuns": true])
     }
@@ -93,10 +122,16 @@ final class AppState {
 
     func inScope(_ repo: String) -> Bool { scopeRepo == nil || scopeRepo == repo }
 
-    // ponytail: interim Now count (review requests + failing workflows) until the Needs-you engine lands in phase 3.
-    var needsYouCount: Int {
-        latestRuns.count { inScope($0.repo) && needsAttention($0) } + pulls.count { inScope($0.repo) && needsAttention($0) }
+    /// Everything that needs you, across every repository, in queue order.
+    // ponytail: rebuilt on each read (a few hundred records); cache it if profiling shows the queue in body time.
+    var allNeedsYou: [NeedsYouItem] {
+        let input = NeedsYou.Input(login: login, notifications: notifications, pulls: pulls, runsByRepo: runsByRepo,
+                                   defaultBranches: defaultBranches, pendingDeployments: pendingDeployments)
+        return NeedsYou.visible(NeedsYou.build(input), done: doneItems, snoozed: snoozedItems, hidden: hiddenItems)
     }
+    /// The queue within the sidebar's repository scope.
+    var needsYou: [NeedsYouItem] { allNeedsYou.filter { inScope($0.repo) } }
+    var needsYouCount: Int { needsYou.count }
     var scopedUnreadCount: Int { notifications.count { $0.unread && inScope($0.repo) } }
     /// Pull requests waiting on your review plus your own.
     var scopedPullCount: Int {
@@ -137,7 +172,7 @@ final class AppState {
     private func exclusionsChanged(reload: Bool) {
         runsByRepo = runsByRepo.filter { !isExcluded($0.key) }
         pulls.removeAll { isExcluded($0.repo) }
-        notifications.removeAll { isExcluded($0.repo) }
+        inbox.removeAll { isExcluded($0.repo) }
         pinnedRepos.removeAll(where: isExcluded)
         if let scopeRepo, isExcluded(scopeRepo) { self.scopeRepo = nil }
         publishBadge()
@@ -180,7 +215,10 @@ final class AppState {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         }
         loops.forEach { $0.cancel() }
+        // Sync cadence (G2). Unchanged GETs are free 304s thanks to ETags; every delay stretches to
+        // 2 minutes when less than 5% of the quota is left.
         loops = [
+            // Everything, including the repository list, every few minutes (Settings ▸ General).
             Task {
                 while !Task.isCancelled {
                     await refresh()
@@ -188,23 +226,31 @@ final class AppState {
                     try? await Task.sleep(for: .seconds(minutes * 60))
                 }
             },
-            // Runs are watched every 15 s: repos with a run in progress each time, and repos with a run
-            // in the last day every minute, to catch newly started runs. Unchanged responses are free 304s.
+            // Notifications every minute, or as rarely as GitHub's X-Poll-Interval asks.
+            Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: SyncCadence.delay(.seconds(60), rateLimit: rateLimit, pollInterval: pollInterval))
+                    await refreshInbox()
+                }
+            },
+            // Pull requests and their readiness every minute.
+            Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: SyncCadence.delay(.seconds(60), rateLimit: rateLimit))
+                    await refreshPulls()
+                }
+            },
+            // Runs: those in progress every 15 s while any run, and repositories with a run in the last day
+            // every minute, to catch new runs.
             Task {
                 var tick = 0
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(15))
+                    let active = runsByRepo.values.contains { $0.contains(where: \.state.isActive) }
+                    try? await Task.sleep(for: SyncCadence.delay(active ? Config.activeRunRefresh : .seconds(60), rateLimit: rateLimit))
                     tick += 1
-                    await watchRuns(includeRecent: tick % 4 == 0)
+                    await watchRuns(includeRecent: !active || tick % 4 == 0)
                 }
             },
-            // The inbox is polled every minute: unchanged responses are 304s, which are free.
-            Task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(60))
-                    await refreshInbox()
-                }
-            }
         ]
     }
 
@@ -223,10 +269,12 @@ final class AppState {
             let ((newRuns, branches), newInbox, newPulls) = try await (runs, inbox, prs)
             defaultBranches = branches
             runsByRepo = newRuns.filter { !isExcluded($0.key) }
+            pendingDeployments = await fetchPendingDeployments()
             pulls = newPulls.filter { !isExcluded($0.repo) }
             let current = Set(newRuns.values.joined().map(\.seenKey) + newPulls.map(\.seenKey))
             if !seen.isSubset(of: current) { seen.formIntersection(current) }  // forget items that are gone
             apply(newInbox)
+            forgetHandledItems()
             lastUpdated = Date()
             rateLimit = await client.rateLimit
             error = nil
@@ -256,7 +304,43 @@ final class AppState {
             return result
         }
         let merged = runsByRepo.merging(updates) { _, new in new }
-        if merged != runsByRepo { runsByRepo = merged }
+        if merged != runsByRepo {
+            runsByRepo = merged
+            pendingDeployments = await fetchPendingDeployments()
+        }
+    }
+
+    /// Asks which environments each waiting run needs approved; only runs paused on a review cost a request.
+    private func fetchPendingDeployments() async -> [Int: [PendingDeployment]] {
+        let waiting = runsByRepo.values.joined().filter(\.isAwaitingApproval)
+        guard !waiting.isEmpty else { return [:] }
+        return await withTaskGroup(of: (Int, [PendingDeployment]?).self) { group in
+            for run in waiting {
+                group.addTask { [client] in (run.id, try? await client.pendingDeployments(run)) }
+            }
+            var result: [Int: [PendingDeployment]] = [:]
+            for await (id, environments) in group { if let environments { result[id] = environments } }
+            return result
+        }
+    }
+
+    private func refreshPulls() async {
+        guard hasToken, !isRefreshing, let fresh = try? await fetchPulls() else { return }
+        pulls = fresh.filter { !isExcluded($0.repo) }
+        publishBadge()
+    }
+
+    /// Done and snooze marks for items that no longer exist, or snoozes that have run out, are dropped.
+    private func forgetHandledItems() {
+        let input = NeedsYou.Input(login: login, notifications: inbox, pulls: pulls, runsByRepo: runsByRepo,
+                                   defaultBranches: defaultBranches, pendingDeployments: pendingDeployments)
+        let items = NeedsYou.build(input)
+        let revisions = Set(items.map(\.revision))
+        if !doneItems.isSubset(of: revisions) { doneItems.formIntersection(revisions) }
+        let now = Date()
+        let live = snoozedItems.filter { $0.value > now }
+        if live.count != snoozedItems.count { snoozedItems = live }
+        hiddenItems.formIntersection(revisions)
     }
 
     /// Notifies about runs that appeared since the last update and are queued or running.
@@ -301,6 +385,7 @@ final class AppState {
             failure = SyncFailure(error)
         }
         rateLimit = await client.rateLimit
+        pollInterval = await client.pollInterval
     }
 
     /// Runs per repository, and each repository's default branch.
@@ -324,9 +409,11 @@ final class AppState {
         return (result, branches)
     }
 
-    /// One search per role, merged so a PR you authored and were mentioned on appears once with both roles.
+    /// One search per role, merged so a PR you authored and were mentioned on appears once with both roles,
+    /// plus readiness from GraphQL (without it, the queue just lacks the "can merge" and "needs changes" tiers).
     private func fetchPulls() async throws -> [PullItem] {
-        try await withThrowingTaskGroup(of: (PRRole, [PullRequest]).self) { group in
+        async let signals = try? client.pullSignals()
+        let items = try await withThrowingTaskGroup(of: (PRRole, [PullRequest]).self) { group in
             for role in PRRole.allCases {
                 group.addTask { [client] in (role, try await client.searchPullRequests(role.qualifier)) }
             }
@@ -335,6 +422,14 @@ final class AppState {
                 for pr in prs { byID[pr.id, default: PullItem(pr: pr, roles: [])].roles.insert(role) }
             }
             return Array(byID.values)
+        }
+        let (statuses, direct) = await signals ?? ([:], [])
+        return items.map { item in
+            var item = item
+            let key = subjectKey(item.repo, item.number)
+            item.status = statuses[key]
+            item.isDirectReview = direct.contains(key)
+            return item
         }
     }
 
@@ -359,46 +454,145 @@ final class AppState {
         NSPasteboard.general.setString(urls.map(\.absoluteString).joined(separator: "\n"), forType: .string)
     }
 
-    // MARK: - Run actions
+    // MARK: - Actions (G4: optimistic, undoable, written to GitHub after the undo window)
 
-    func rerunFailedJobs(_ runs: [WorkflowRun]) {
-        perform(runs.filter(\.state.canRerunFailedJobs)) { [client] in try await client.rerunFailedJobs($0) }
+    /// Hides `item` and its threads right away; after the undo window runs `commit`, marks the threads done
+    /// and refreshes with `reload`. If GitHub refuses, the item comes back marked as failed.
+    private func act(on item: NeedsYouItem?, _ message: String, commit: @escaping () async throws -> Void,
+                     reload: (() async -> Void)? = nil) {
+        let threads = Set(item?.notificationIDs ?? [])
+        actions.perform(message, apply: { [self] in
+            if let item {
+                hiddenItems.insert(item.revision)
+                failedItems.remove(item.id)
+            }
+            hiddenThreads.formUnion(threads)
+            publishBadge()
+        }, revert: { [self] in
+            if let item { hiddenItems.remove(item.revision) }
+            hiddenThreads.subtract(threads)
+            publishBadge()
+        }, commit: { [client] in
+            try await commit()
+            for thread in threads { try await client.markDone(thread: thread) }
+        }, completed: { [self] in
+            inbox.removeAll { threads.contains($0.id) }
+            hiddenThreads.subtract(threads)
+            await reload?()
+        }, failed: { [self] in
+            if let item { failedItems.insert(item.id) }
+        })
     }
 
-    func rerunAllJobs(_ runs: [WorkflowRun]) {
-        perform(runs.filter { !$0.state.isActive }) { [client] in try await client.rerun($0) }
+    /// "api-gateway #214".
+    private func label(_ repo: String, _ number: Int) -> String {
+        "\(repo.split(separator: "/").last.map(String.init) ?? repo) #\(number)"
     }
 
-    /// Cancelling can't be undone, so it goes through a confirmation dialog first.
+    /// Done (E): the item leaves the queue until something new happens on it, and its threads are marked done.
+    func done(_ item: NeedsYouItem) {
+        actions.perform("Marked done", apply: { [self] in
+            doneItems.insert(item.revision)
+            hiddenThreads.formUnion(item.notificationIDs)
+            publishBadge()
+        }, revert: { [self] in
+            doneItems.remove(item.revision)
+            hiddenThreads.subtract(item.notificationIDs)
+            publishBadge()
+        }, commit: { [client] in
+            for thread in item.notificationIDs { try await client.markDone(thread: thread) }
+        }, completed: { [self] in
+            inbox.removeAll { item.notificationIDs.contains($0.id) }
+        })
+    }
+
+    /// Snooze (S): the item leaves the queue until `date`. Local only.
+    func snooze(_ item: NeedsYouItem, until date: Date) {
+        actions.perform("Snoozed until \(date.formatted(date: .abbreviated, time: .shortened))", apply: { [self] in
+            snoozedItems[item.id] = date
+            publishBadge()
+        }, revert: { [self] in
+            snoozedItems[item.id] = nil
+            publishBadge()
+        }, commit: {})
+    }
+
+    func review(_ pull: PullItem, _ event: GitHubClient.ReviewEvent, body: String? = nil, item: NeedsYouItem? = nil) {
+        let verb = switch event {
+        case .approve: "Approved"
+        case .requestChanges: "Requested changes on"
+        case .comment: "Commented on"
+        }
+        act(on: item, "\(verb) \(label(pull.repo, pull.number))",
+            commit: { [client] in try await client.submitReview(pull.pr.ref, event: event, body: body) },
+            reload: { [self] in await refreshPulls() })
+    }
+
+    func merge(_ pull: PullItem, method: String = "squash", deleteBranch: Bool, item: NeedsYouItem? = nil) {
+        act(on: item, "Merged \(label(pull.repo, pull.number))",
+            commit: { [client] in try await client.merge(pull.pr.ref, method: method, deleteBranch: deleteBranch) },
+            reload: { [self] in await refreshPulls() })
+    }
+
+    /// Approves (or rejects) every environment of the run you may review.
+    func reviewDeployment(_ item: NeedsYouItem, approve: Bool, comment: String = "") {
+        guard case .deployment(let run, let environments) = item.kind else { return }
+        act(on: item, "\(approve ? "Approved" : "Rejected") \(run.workflowName) #\(run.runNumber)",
+            commit: { [client] in
+                try await client.reviewDeployments(run, environments: environments.map(\.environment.id), approve: approve, comment: comment)
+            },
+            reload: { [self] in await reloadRuns() })
+    }
+
+    func reply(to ref: IssueRef, body: String, item: NeedsYouItem? = nil) {
+        act(on: item, "Replied on \(label(ref.repo, ref.number))",
+            commit: { [client] in try await client.addComment(ref, body: body) })
+    }
+
+    func rerunFailedJobs(_ runs: [WorkflowRun], item: NeedsYouItem? = nil) {
+        let runs = runs.filter(\.state.canRerunFailedJobs)
+        guard !runs.isEmpty else { return }
+        act(on: item, runs.count == 1 ? "Re-running failed jobs of \(runs[0].workflowName)" : "Re-running \(runs.count) runs",
+            commit: { [client] in for run in runs { try await client.rerunFailedJobs(run) } },
+            reload: { [self] in await reloadRuns() })
+    }
+
+    func rerunAllJobs(_ runs: [WorkflowRun], item: NeedsYouItem? = nil) {
+        let runs = runs.filter { !$0.state.isActive }
+        guard !runs.isEmpty else { return }
+        act(on: item, runs.count == 1 ? "Re-running \(runs[0].workflowName)" : "Re-running \(runs.count) runs",
+            commit: { [client] in for run in runs { try await client.rerun(run) } },
+            reload: { [self] in await reloadRuns() })
+    }
+
+    /// Cancelling can't be undone on GitHub, so it goes through a confirmation dialog first.
     func requestCancel(_ runs: [WorkflowRun]) {
         pendingCancel = runs.filter(\.state.isActive)
     }
 
     func confirmCancel() {
-        perform(pendingCancel) { [client] in try await client.cancel($0) }
+        let runs = pendingCancel
         pendingCancel = []
-    }
-
-    private func perform(_ runs: [WorkflowRun], _ action: @escaping (WorkflowRun) async throws -> Void) {
         guard !runs.isEmpty else { return }
-        Task {
-            do {
-                for run in runs { try await action(run) }
-                try? await Task.sleep(for: .seconds(2))  // give GitHub a moment to flip the status
-                await refresh()
-            } catch {
-                self.error = error.localizedDescription
-            }
-        }
+        act(on: nil, runs.count == 1 ? "Cancelling \(runs[0].workflowName)" : "Cancelling \(runs.count) runs",
+            commit: { [client] in for run in runs { try await client.cancel(run) } },
+            reload: { [self] in await reloadRuns() })
     }
 
-    // MARK: - Inbox actions (optimistic: update locally, then tell GitHub)
+    /// After a run action GitHub needs a moment to flip the status.
+    private func reloadRuns() async {
+        try? await Task.sleep(for: .seconds(2))
+        await watchRuns(includeRecent: true)
+    }
 
+    // MARK: - Inbox actions
+
+    /// Reading is immediate (no undo): it's what opening a thread does.
     func markRead(_ items: [GitHubNotification]) {
         let ids = Set(items.filter(\.unread).map(\.id))
         guard !ids.isEmpty else { return }
-        for index in notifications.indices where ids.contains(notifications[index].id) {
-            notifications[index].unread = false
+        for index in inbox.indices where ids.contains(inbox[index].id) {
+            inbox[index].unread = false
         }
         publishBadge()
         Task {
@@ -414,15 +608,18 @@ final class AppState {
     func markDone(_ items: [GitHubNotification]) {
         let ids = Set(items.map(\.id))
         guard !ids.isEmpty else { return }
-        notifications.removeAll { ids.contains($0.id) }
-        publishBadge()
-        Task {
-            do {
-                for item in items { try await client.markDone(item) }
-            } catch {
-                self.error = error.localizedDescription
-            }
-        }
+        actions.perform(ids.count == 1 ? "Marked done" : "Marked \(ids.count) done", apply: { [self] in
+            hiddenThreads.formUnion(ids)
+            publishBadge()
+        }, revert: { [self] in
+            hiddenThreads.subtract(ids)
+            publishBadge()
+        }, commit: { [client] in
+            for id in ids { try await client.markDone(thread: id) }
+        }, completed: { [self] in
+            inbox.removeAll { ids.contains($0.id) }
+            hiddenThreads.subtract(ids)
+        })
     }
 
     // MARK: - Account
@@ -444,8 +641,12 @@ final class AppState {
         failure = nil
         scopeRepo = nil
         runsByRepo = [:]
-        notifications = []
+        inbox = []
         pulls = []
+        pendingDeployments = [:]
+        hiddenItems = []
+        hiddenThreads = []
+        failedItems = []
         seen = []
         knownFailures = nil
         knownUnread = nil
@@ -454,18 +655,21 @@ final class AppState {
 
     // MARK: - Alerts
 
-    /// Dock badge counts what needs attention: unread notifications plus failing workflows.
+    /// The Dock badge counts the Needs-you queue (or unread plus failing; see `Config.dockBadge`).
     private func publishBadge() {
-        let count = unreadCount + failingCount
-        NSApp.dockTile.badgeLabel = count == 0 ? nil : "\(count)"
+        let count = switch Config.dockBadge {
+        case .needsYou: allNeedsYou.count
+        case .unreadPlusFailing: unreadCount + failingCount
+        }
+        NSApp?.dockTile.badgeLabel = count == 0 ? nil : "\(count)"
     }
 
     private func apply(_ allInbox: [GitHubNotification]) {
-        let inbox = allInbox.filter { !isExcluded($0.repo) }
-        notifications = inbox
+        let fresh = allInbox.filter { !isExcluded($0.repo) }
+        inbox = fresh
         publishBadge()
 
-        let unread = inbox.filter(\.unread)
+        let unread = fresh.filter(\.unread)
         defer { knownUnread = Set(unread.map(\.id)) }
         guard let known = knownUnread, defaults.bool(forKey: "notifyInbox") else { return }
         // Threads you started (reason "author") stay in the Inbox but don't pop up unless opted in.
@@ -559,5 +763,17 @@ enum SyncStatus: Equatable {
         case .rateLimited, .syncing: .amber
         case .live: .green
         }
+    }
+}
+
+// MARK: - Sync cadence
+
+enum SyncCadence {
+    /// `base`, stretched to GitHub's X-Poll-Interval, and to 2 minutes when under 5% of the quota is left.
+    static func delay(_ base: Duration, rateLimit: RateLimit?, pollInterval: Int? = nil) -> Duration {
+        var delay = base
+        if let pollInterval { delay = max(delay, .seconds(pollInterval)) }
+        if let limit = rateLimit, Double(limit.remaining) < Double(limit.limit) * 0.05 { delay = max(delay, .seconds(120)) }
+        return delay
     }
 }

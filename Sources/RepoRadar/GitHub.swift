@@ -9,10 +9,27 @@ struct RateLimit: Hashable {
 }
 
 struct GitHubError: LocalizedError {
+    /// GitHub's own reason, e.g. "At least 2 approving reviews are required by reviewers with write access."
     let message: String
     /// HTTP status, when the error came from a response.
     var status: Int?
-    var errorDescription: String? { message }
+    var errorDescription: String? { status.map { "GitHub HTTP \($0): \(message)" } ?? message }
+
+    /// The reason from an error response: `message` plus any `errors` details (objects or plain strings).
+    static func reason(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let details = (json["errors"] as? [Any] ?? []).compactMap { item -> String? in
+            if let text = item as? String { return text }
+            guard let object = item as? [String: Any] else { return nil }
+            return object["message"] as? String ?? (object["code"] as? String).map { "\($0) \(object["field"] as? String ?? "")" }
+        }
+        let message = json["message"] as? String
+        return ([message].compactMap { $0 } + details).joined(separator: ": ").nilIfEmpty
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Keychain storage for the GitHub token.
@@ -59,6 +76,8 @@ actor GitHubClient {
     private var cache: [URL: (etag: String, data: Data)] = [:]
     /// Core REST quota from the latest response headers (search has its own, smaller quota).
     private(set) var rateLimit: RateLimit?
+    /// Seconds GitHub asks to wait between notification polls (`X-Poll-Interval`).
+    private(set) var pollInterval: Int?
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -69,11 +88,11 @@ actor GitHubClient {
     func resetCache() { cache = [:] }
 
     @discardableResult
-    private func send(_ path: String, query: [String: String] = [:], method: String = "GET") async throws -> Data {
+    private func send(_ path: String, query: [String: String] = [:], method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
         guard let token = Keychain.load(), !token.isEmpty else {
             throw GitHubError(message: "Not signed in to GitHub. Sign in from Settings (⌘,).", status: 401)
         }
-        var components = URLComponents(string: "https://api.github.com" + path)!
+        var components = URLComponents(string: Config.apiHost + path)!
         if !query.isEmpty { components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
         let url = components.url!
 
@@ -85,8 +104,15 @@ actor GitHubClient {
         if method == "GET", let etag = cache[url]?.etag {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
+        if let body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if path == "/notifications", let interval = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Poll-Interval") {
+            pollInterval = Int(interval)
+        }
         if let http = response as? HTTPURLResponse, http.value(forHTTPHeaderField: "X-RateLimit-Resource") == "core",
            let remaining = Int(http.value(forHTTPHeaderField: "X-RateLimit-Remaining") ?? ""),
            let limit = Int(http.value(forHTTPHeaderField: "X-RateLimit-Limit") ?? "") {
@@ -96,8 +122,13 @@ actor GitHubClient {
         let code = (response as? HTTPURLResponse)?.statusCode ?? -1
         if code == 304, let cached = cache[url] { return cached.data }
         guard (200..<300).contains(code) else {
-            let message = (try? JSONDecoder().decode([String: String].self, from: data))?["message"]
-            throw GitHubError(message: "GitHub HTTP \(code): \(message ?? String(decoding: data, as: UTF8.self))", status: code)
+            let http = response as? HTTPURLResponse
+            // As RepoBar does: a 403/429 with no quota left or a Retry-After is rate limiting, whatever the body says.
+            if [403, 429].contains(code),
+               http?.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0" || http?.value(forHTTPHeaderField: "Retry-After") != nil {
+                throw GitHubError(message: "API rate limit exceeded", status: code)
+            }
+            throw GitHubError(message: GitHubError.reason(from: data) ?? String(decoding: data, as: UTF8.self), status: code)
         }
         if method == "GET", let etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag") {
             cache[url] = (etag, data)
@@ -198,7 +229,11 @@ actor GitHubClient {
     }
 
     func markDone(_ notification: GitHubNotification) async throws {
-        try await send("/notifications/threads/\(notification.id)", method: "DELETE")
+        try await markDone(thread: notification.id)
+    }
+
+    func markDone(thread id: String) async throws {
+        try await send("/notifications/threads/\(id)", method: "DELETE")
     }
 
     // MARK: Issues & pull requests
@@ -222,6 +257,108 @@ actor GitHubClient {
 
     func comments(_ ref: IssueRef) async throws -> [IssueComment] {
         try await get("/repos/\(ref.repo)/issues/\(ref.number)/comments", query: ["per_page": "50"])
+    }
+
+    // MARK: Reviews, merging, comments (redesign §7)
+
+    enum ReviewEvent: String { case approve = "APPROVE", requestChanges = "REQUEST_CHANGES", comment = "COMMENT" }
+
+    func submitReview(_ ref: IssueRef, event: ReviewEvent, body: String?) async throws {
+        var fields: [String: Any] = ["event": event.rawValue]
+        if let body, !body.isEmpty { fields["body"] = body }
+        try await send("/repos/\(ref.repo)/pulls/\(ref.number)/reviews", method: "POST", body: fields)
+    }
+
+    /// Merges and, if asked, deletes the head branch afterwards.
+    func merge(_ ref: IssueRef, method: String = "squash", deleteBranch: Bool) async throws {
+        var branch: String?
+        if deleteBranch { branch = try await pull(ref).head.ref }
+        try await send("/repos/\(ref.repo)/pulls/\(ref.number)/merge", method: "PUT", body: ["merge_method": method])
+        if let branch {
+            try await send("/repos/\(ref.repo)/git/refs/heads/\(branch)", method: "DELETE")
+        }
+    }
+
+    func addComment(_ ref: IssueRef, body: String) async throws {
+        try await send("/repos/\(ref.repo)/issues/\(ref.number)/comments", method: "POST", body: ["body": body])
+    }
+
+    // MARK: Deployments
+
+    func pendingDeployments(_ run: WorkflowRun) async throws -> [PendingDeployment] {
+        try await get("/repos/\(run.repo)/actions/runs/\(run.id)/pending_deployments")
+    }
+
+    /// Approves or rejects every environment of the run the current user may review.
+    func reviewDeployments(_ run: WorkflowRun, environments: [Int], approve: Bool, comment: String) async throws {
+        try await send("/repos/\(run.repo)/actions/runs/\(run.id)/pending_deployments", method: "POST", body: [
+            "environment_ids": environments, "state": approve ? "approved" : "rejected", "comment": comment,
+        ])
+    }
+
+    // MARK: GraphQL
+
+    private struct GraphQLResponse<T: Decodable>: Decodable {
+        struct Message: Decodable { let message: String }
+        let data: T?
+        let errors: [Message]?
+    }
+
+    func graphQL<T: Decodable>(_ query: String, as type: T.Type = T.self) async throws -> T {
+        let data = try await send("/graphql", method: "POST", body: ["query": query])
+        let response: GraphQLResponse<T>
+        do { response = try decoder.decode(GraphQLResponse<T>.self, from: data) } catch {
+            throw GitHubError(message: "Failed to decode GraphQL response: \(error)")
+        }
+        guard let value = response.data else {
+            throw GitHubError(message: response.errors?.map(\.message).joined(separator: "; ") ?? "Empty GraphQL response")
+        }
+        return value
+    }
+
+    /// Review decision, merge state and check rollup of your open pull requests, and which review requests name you
+    /// directly (rather than a team you're on), keyed "owner/repo#number".
+    func pullSignals() async throws -> (statuses: [String: PullStatus], direct: Set<String>) {
+        struct Node: Decodable {
+            struct Repository: Decodable { let nameWithOwner: String }
+            struct Commits: Decodable {
+                struct Item: Decodable {
+                    struct Commit: Decodable {
+                        struct Rollup: Decodable { let state: String }
+                        let statusCheckRollup: Rollup?
+                    }
+                    let commit: Commit
+                }
+                let nodes: [Item]
+            }
+            let number: Int?
+            let repository: Repository?
+            let reviewDecision: String?
+            let mergeStateStatus: String?
+            let commits: Commits?
+            var key: String? { number.flatMap { number in repository.map { "\($0.nameWithOwner)#\(number)" } } }
+        }
+        struct Search: Decodable { let nodes: [Node] }
+        struct Result: Decodable { let authored: Search; let direct: Search }
+        let fields = "number repository { nameWithOwner }"
+        let result: Result = try await graphQL("""
+        query {
+          authored: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 50) {
+            nodes { ... on PullRequest { \(fields) reviewDecision mergeStateStatus
+              commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }
+          }
+          direct: search(query: "is:pr is:open archived:false user-review-requested:@me", type: ISSUE, first: 50) {
+            nodes { ... on PullRequest { \(fields) } }
+          }
+        }
+        """)
+        var statuses: [String: PullStatus] = [:]
+        for node in result.authored.nodes {
+            guard let key = node.key else { continue }
+            statuses[key] = PullStatus(reviewDecision: node.reviewDecision, mergeState: node.mergeStateStatus,
+                                       checks: .init(rollup: node.commits?.nodes.first?.commit.statusCheckRollup?.state))
+        }
+        return (statuses, Set(result.direct.nodes.compactMap(\.key)))
     }
 }
 

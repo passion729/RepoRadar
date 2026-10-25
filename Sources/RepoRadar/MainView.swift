@@ -54,6 +54,7 @@ struct MainView: View {
                 .navigationTitle(page.title)
                 .toolbar { toolbar }
         }
+        .toasts(state.toasts)
         .onChange(of: page) { search = "" }
         .onChange(of: state.requestedPage, initial: true) {
             guard let requested = state.requestedPage else { return }
