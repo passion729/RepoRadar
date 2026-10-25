@@ -288,3 +288,11 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
     #expect(!matchesSearch("ci deploy", ["CI", "o/r", "main"]))
     #expect(matchesSearch("", ["anything"]))
 }
+
+@Test func exclusionsMatchReposAndOwners() {
+    let excluded = { AppState.isExcluded($0, repos: ["o/one"], owners: ["org"]) }
+    #expect(excluded("o/one"))
+    #expect(!excluded("o/two"))
+    #expect(excluded("org/anything"))
+    #expect(!excluded("orgx/repo"))  // owner match is exact, not a prefix
+}

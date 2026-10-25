@@ -52,6 +52,17 @@ final class AppState {
         didSet { defaults.set(pinnedRepos, forKey: "pinnedRepos") }
     }
     static let maxPins = 8
+    /// Repositories and owners (users or organizations) left out of every list and count (G7).
+    private(set) var excludedRepos = UserDefaults.standard.stringArray(forKey: "excludedRepos") ?? [] {
+        didSet { defaults.set(excludedRepos, forKey: "excludedRepos") }
+    }
+    private(set) var excludedOwners = UserDefaults.standard.stringArray(forKey: "excludedOwners") ?? [] {
+        didSet { defaults.set(excludedOwners, forKey: "excludedOwners") }
+    }
+    /// System alerts stay quiet until then.
+    private(set) var alertsPausedUntil = UserDefaults.standard.object(forKey: "alertsPausedUntil") as? Date {
+        didSet { defaults.set(alertsPausedUntil, forKey: "alertsPausedUntil") }
+    }
     /// The pinned repository every page is filtered to, or nil for all.
     var scopeRepo: String?
 
@@ -99,6 +110,46 @@ final class AppState {
         let branch = defaultBranches[repo]
         return runs.filter { branch == nil || $0.headBranch == branch }.sorted { $0.createdAt < $1.createdAt }
     }
+
+    // MARK: Exclusions
+
+    func isExcluded(_ repo: String) -> Bool {
+        Self.isExcluded(repo, repos: excludedRepos, owners: excludedOwners)
+    }
+
+    nonisolated static func isExcluded(_ repo: String, repos: [String], owners: [String]) -> Bool {
+        repos.contains(repo) || owners.contains(String(repo.prefix { $0 != "/" }))
+    }
+
+    func setExcluded(_ repo: String, _ excluded: Bool) {
+        excludedRepos.removeAll { $0 == repo }
+        if excluded { excludedRepos.append(repo) }
+        exclusionsChanged(reload: !excluded)
+    }
+
+    func setExcluded(owner: String, _ excluded: Bool) {
+        excludedOwners.removeAll { $0 == owner }
+        if excluded { excludedOwners.append(owner) }
+        exclusionsChanged(reload: !excluded)
+    }
+
+    /// Drops newly excluded data right away; bringing a repository back needs a refresh.
+    private func exclusionsChanged(reload: Bool) {
+        runsByRepo = runsByRepo.filter { !isExcluded($0.key) }
+        pulls.removeAll { isExcluded($0.repo) }
+        notifications.removeAll { isExcluded($0.repo) }
+        pinnedRepos.removeAll(where: isExcluded)
+        if let scopeRepo, isExcluded(scopeRepo) { self.scopeRepo = nil }
+        publishBadge()
+        if reload { Task { await refresh() } }
+    }
+
+    // MARK: Alerts
+
+    var alertsPaused: Bool { (alertsPausedUntil ?? .distantPast) > Date() }
+
+    func pauseAlerts(for duration: TimeInterval) { alertsPausedUntil = Date().addingTimeInterval(duration) }
+    func resumeAlerts() { alertsPausedUntil = nil }
 
     // MARK: Pins
 
@@ -171,8 +222,8 @@ final class AppState {
             async let prs = fetchPulls()
             let ((newRuns, branches), newInbox, newPulls) = try await (runs, inbox, prs)
             defaultBranches = branches
-            runsByRepo = newRuns
-            pulls = newPulls
+            runsByRepo = newRuns.filter { !isExcluded($0.key) }
+            pulls = newPulls.filter { !isExcluded($0.repo) }
             let current = Set(newRuns.values.joined().map(\.seenKey) + newPulls.map(\.seenKey))
             if !seen.isSubset(of: current) { seen.formIntersection(current) }  // forget items that are gone
             apply(newInbox)
@@ -256,6 +307,7 @@ final class AppState {
     private func fetchRuns() async throws -> ([String: [WorkflowRun]], [String: String]) {
         let days = max(1, defaults.integer(forKey: "lookbackDays"))
         let repos = try await client.repos(pushedSince: Date().addingTimeInterval(-Double(days) * 86_400))
+            .filter { !isExcluded($0.fullName) }  // excluded repositories cost no requests
         let branches = Dictionary(repos.compactMap { repo in repo.defaultBranch.map { (repo.fullName, $0) } },
                                   uniquingKeysWith: { first, _ in first })
         var result: [String: [WorkflowRun]] = [:]
@@ -408,7 +460,8 @@ final class AppState {
         NSApp.dockTile.badgeLabel = count == 0 ? nil : "\(count)"
     }
 
-    private func apply(_ inbox: [GitHubNotification]) {
+    private func apply(_ allInbox: [GitHubNotification]) {
+        let inbox = allInbox.filter { !isExcluded($0.repo) }
         notifications = inbox
         publishBadge()
 
@@ -434,7 +487,7 @@ final class AppState {
     }
 
     private func post(id: String, title: String, subtitle: String, body: String?, url: URL) {
-        guard canNotify else { return }
+        guard canNotify, !alertsPaused else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.subtitle = subtitle

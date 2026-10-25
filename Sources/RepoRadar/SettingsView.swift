@@ -111,6 +111,25 @@ struct GeneralSettings: View {
                 Text("Includes repositories you own, collaborate on, or can access through an organization. Archived repositories are skipped.")
             }
             Section {
+                ForEach(state.excludedOwners, id: \.self) { owner in
+                    LabeledContent("\(owner) (all repositories)") {
+                        Button("Watch Again") { state.setExcluded(owner: owner, false) }
+                    }
+                }
+                ForEach(state.excludedRepos, id: \.self) { repo in
+                    LabeledContent(repo) {
+                        Button("Watch Again") { state.setExcluded(repo, false) }
+                    }
+                }
+                if state.excludedRepos.isEmpty && state.excludedOwners.isEmpty {
+                    Text("None").foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Excluded repositories")
+            } footer: {
+                Text("Exclude repositories or whole organizations from the Filter Repositories button in the toolbar.")
+            }
+            Section {
                 Toggle("Notify about new GitHub notifications", isOn: $notifyInbox)
                 Toggle("Include activity on my own pull requests and issues", isOn: $notifyOwnActivity)
                     .disabled(!notifyInbox)

@@ -97,9 +97,15 @@ struct MainView: View {
                 .frame(width: 280)
         }
         .sharedBackgroundVisibility(.hidden)
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
             RefreshButton()
+            RepoFilterButton()
+            AlertSettingsButton()
         }
+        ToolbarItem(placement: .primaryAction) {
+            AccountButton()
+        }
+        .sharedBackgroundVisibility(.hidden)
     }
 }
 
