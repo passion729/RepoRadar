@@ -17,6 +17,8 @@ struct AccountSettings: View {
     @State private var deviceCode: DeviceCode?
     @State private var loginTask: Task<Void, Never>?
     @State private var loginError: String?
+    /// The GitHub CLI's signed-in account, when there is one.
+    @State private var cliAccount: String?
 
     var body: some View {
         Form {
@@ -38,12 +40,24 @@ struct AccountSettings: View {
             } else if state.hasToken {
                 Section {
                     LabeledContent("Signed in as", value: state.login.map { "@\($0)" } ?? "…")
+                    if state.usesGitHubCLI {
+                        LabeledContent("Account from", value: "GitHub CLI (gh)")
+                    }
                     if let scopes = state.tokenScopes {
                         LabeledContent("Permissions", value: scopes.isEmpty ? "—" : scopes.sorted().joined(separator: ", "))
                     }
                     Button("Sign Out") { state.signOut() }
+                } footer: {
+                    if state.usesGitHubCLI {
+                        Text("RepoRadar asks gh for its token as needed. Signing out here leaves gh signed in.")
+                    }
                 }
-                if let scopes = state.tokenScopes, !scopes.contains("read:org"), !scopes.contains("admin:org") {
+                if !state.usesGitHubCLI, let cliAccount {
+                    Section {
+                        Button("Use GitHub CLI Account (@\(cliAccount)) Instead") { useCLI() }
+                    }
+                }
+                if !state.usesGitHubCLI, let scopes = state.tokenScopes, !scopes.contains("read:org"), !scopes.contains("admin:org") {
                     Section {
                         Button("Re-authorize with GitHub…") { startDeviceFlow() }
                     } footer: {
@@ -51,9 +65,20 @@ struct AccountSettings: View {
                     }
                 }
             } else {
+                if let cliAccount {
+                    Section {
+                        Button("Use GitHub CLI Account (@\(cliAccount))") { useCLI() }
+                            .buttonStyle(.glassProminent)
+                    } footer: {
+                        Text("You're signed in to the GitHub CLI (gh). RepoRadar uses that login and follows it if it changes.")
+                    }
+                }
                 Section {
-                    Button("Sign in with GitHub…") { startDeviceFlow() }
-                        .buttonStyle(.glassProminent)
+                    if cliAccount == nil {
+                        Button("Sign in with GitHub…") { startDeviceFlow() }.buttonStyle(.glassProminent)
+                    } else {
+                        Button("Sign in with GitHub…") { startDeviceFlow() }
+                    }
                 } footer: {
                     Text("Opens github.com to approve access. No password is stored.")
                 }
@@ -76,6 +101,16 @@ struct AccountSettings: View {
             }
         }
         .formStyle(.grouped)
+        .task(id: state.hasToken) { cliAccount = await GitHubCLI.account() }
+    }
+
+    private func useCLI() {
+        loginError = nil
+        Task {
+            if !(await state.signInWithGitHubCLI()) {
+                loginError = "The GitHub CLI didn't hand over a token. Run `gh auth login` in Terminal and try again."
+            }
+        }
     }
 
     private func startDeviceFlow() {

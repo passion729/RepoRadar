@@ -105,8 +105,10 @@ actor GitHubClient {
 
     @discardableResult
     private func send(_ path: String, query: [String: String] = [:], method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
-        guard let token = Keychain.load(), !token.isEmpty else {
-            throw GitHubError(message: "Not signed in to GitHub. Sign in from Settings (⌘,).", status: 401)
+        guard let token = await Credentials.token(), !token.isEmpty else {
+            throw GitHubError(message: Credentials.source == .githubCLI
+                ? "The GitHub CLI isn't signed in to github.com. Run `gh auth login`, or sign in from Settings (⌘,)."
+                : "Not signed in to GitHub. Sign in from Settings (⌘,).", status: 401)
         }
         var components = URLComponents(string: Config.apiHost + path)!
         if !query.isEmpty { components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
@@ -140,6 +142,7 @@ actor GitHubClient {
         }
         let code = (response as? HTTPURLResponse)?.statusCode ?? -1
         if code == 304, let cached = cache[url] { return cached.data }
+        if code == 401 { await Credentials.invalidate() }  // the CLI's token may have changed
         guard (200..<300).contains(code) else {
             let http = response as? HTTPURLResponse
             // As RepoBar does: a 403/429 with no quota left or a Retry-After is rate limiting, whatever the body says.

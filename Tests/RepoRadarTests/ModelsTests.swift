@@ -307,3 +307,17 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
     #expect(excluded("org/anything"))
     #expect(!excluded("orgx/repo"))  // owner match is exact, not a prefix
 }
+
+@Test func githubCLIActiveAccount() {
+    // The shape `gh auth status --hostname github.com --json hosts` prints.
+    let json = """
+    {"hosts":{"github.com":[
+      {"state":"success","active":false,"host":"github.com","login":"work","tokenSource":"keyring"},
+      {"state":"success","active":true,"host":"github.com","login":"passion729","tokenSource":"keyring","scopes":"repo"}]}}
+    """
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: json) == "passion729")
+    let failed = #"{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"x","error":"bad token"}]}}"#
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: failed) == nil)
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: #"{"hosts":{}}"#) == nil)
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: "not json") == nil)
+}

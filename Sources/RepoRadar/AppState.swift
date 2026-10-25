@@ -98,7 +98,9 @@ final class AppState {
     private(set) var pollInterval: Int?
     /// The token's OAuth scopes, once a response has reported them (fine-grained tokens report none).
     private(set) var tokenScopes: Set<String>?
-    private(set) var hasToken = Keychain.load() != nil
+    private(set) var hasToken = Credentials.isSignedIn
+    /// Signed in through the GitHub CLI rather than RepoRadar's own sign-in.
+    var usesGitHubCLI: Bool { hasToken && Credentials.source == .githubCLI }
     var error: String?
     /// Why the last sync failed, if it did; cleared by the next successful one.
     private(set) var failure: SyncFailure?
@@ -325,7 +327,7 @@ final class AppState {
 
     func refresh() async {
         guard !isRefreshing else { return }
-        hasToken = Keychain.load() != nil
+        hasToken = Credentials.isSignedIn
         guard hasToken else { return }
         isRefreshing = true
         defer { isRefreshing = false }
@@ -843,7 +845,26 @@ final class AppState {
 
     // MARK: - Account
 
+    /// Uses the GitHub CLI's login (as t3code does). False when gh has no token to give.
+    @discardableResult
+    func signInWithGitHubCLI() async -> Bool {
+        let previous = Credentials.source
+        Credentials.source = .githubCLI
+        await GitHubCLI.shared.invalidate()
+        guard await Credentials.token() != nil else {
+            Credentials.source = previous
+            return false
+        }
+        await client.resetCache()
+        hasToken = true
+        login = nil
+        tokenScopes = nil
+        start()
+        return true
+    }
+
     func signIn(token: String) {
+        Credentials.source = .keychain
         Keychain.save(token)
         hasToken = true
         login = nil
@@ -851,7 +872,10 @@ final class AppState {
     }
 
     func signOut() {
-        Keychain.delete()
+        // Signing out of the CLI's account only stops using it; gh stays signed in.
+        if Credentials.source == .keychain { Keychain.delete() }
+        Credentials.source = .keychain
+        Task { await GitHubCLI.shared.invalidate() }
         loops.forEach { $0.cancel() }
         Task { await client.resetCache() }
         hasToken = false

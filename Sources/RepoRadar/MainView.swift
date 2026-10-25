@@ -526,16 +526,27 @@ struct StatusPopover: View {
 }
 
 struct SignInPrompt: View {
+    @Environment(AppState.self) private var state
+    @State private var cliAccount: String?
+
     var body: some View {
         ContentUnavailableView {
             Label("Sign in to GitHub", systemImage: "person.crop.circle.badge.questionmark")
         } description: {
             Text("RepoRadar brings your notifications, pull requests and GitHub Actions runs together.")
         } actions: {
-            SettingsLink { Text("Open Settings") }
-                .buttonStyle(.glassProminent)
-                .controlSize(.large)
+            if let cliAccount {
+                Button("Use GitHub CLI Account (@\(cliAccount))") { Task { await state.signInWithGitHubCLI() } }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+                SettingsLink { Text("Other Ways to Sign In…") }
+            } else {
+                SettingsLink { Text("Open Settings") }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+            }
         }
+        .task { cliAccount = await GitHubCLI.account() }
     }
 }
 
