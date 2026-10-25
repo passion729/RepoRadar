@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         Task { @MainActor in
             MenuBarController.shared = MenuBarController(state: AppState.shared)
             AppState.shared.start()
+            _ = Updates.shared  // starts Sparkle's daily check
+
         }
     }
 

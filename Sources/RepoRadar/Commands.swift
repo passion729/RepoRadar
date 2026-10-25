@@ -42,6 +42,11 @@ struct AppCommands: Commands {
     var body: some Commands {
         SidebarCommands()
 
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { Updates.shared.check() }
+                .disabled(!Updates.shared.isAvailable)
+        }
+
         // ⌘Z undoes the newest RepoRadar action while its undo window is open; otherwise it's the usual text undo.
         CommandGroup(replacing: .undoRedo) {
             Button(state.actions.canUndo ? "Undo Last Action" : "Undo") {

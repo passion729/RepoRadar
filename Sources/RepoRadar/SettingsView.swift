@@ -139,6 +139,7 @@ struct GeneralSettings: View {
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("autoReadSeconds") private var autoReadSeconds = 3
     @AppStorage("doneAfterReply") private var doneAfterReply = true
+    @Bindable private var updates = Updates.shared
 
     var body: some View {
         Form {
@@ -190,6 +191,21 @@ struct GeneralSettings: View {
             } footer: {
                 Text("Read notifications, and failing workflows or review requests you've viewed, stop counting toward the badges until something new happens.")
             }
+            Section {
+                Toggle("Check for updates automatically", isOn: $updates.automaticallyChecks)
+                Toggle("Download and install updates automatically", isOn: $updates.automaticallyInstalls)
+                    .disabled(!updates.automaticallyChecks)
+                LabeledContent("Version \(Updates.version)") {
+                    Button("Check Now") { updates.check() }
+                }
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text(updates.isAvailable
+                     ? "RepoRadar checks once a day. Updates download in the background and install the next time it quits."
+                     : "Updates are off in debug builds.")
+            }
+            .disabled(!updates.isAvailable)
         }
         .formStyle(.grouped)
         .onChange(of: refreshMinutes) { if state.hasToken { state.start() } }

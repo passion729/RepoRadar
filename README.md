@@ -39,6 +39,7 @@ Built with SwiftUI and Liquid Glass for macOS 26, packaged with Swift Package Ma
 - Polls with ETags and honors `X-Poll-Interval` and rate limits; the sidebar shows sync state and API quota
 - Controls the token can't use are greyed out and say which scope is missing
 - Light and dark appearance, VoiceOver labels and actions, Reduce Motion, custom fonts and text size (Settings → Appearance)
+- Updates itself with Sparkle: checks once a day, downloads in the background and installs on quit. Both can be turned off in Settings → General, and **RepoRadar → Check for Updates…** checks right away
 
 ## Requirements
 
@@ -80,7 +81,9 @@ Releases are published from a Mac that has the team certificate, not from CI, so
 ./release.sh 1.1
 ```
 
-It runs the tests, builds and signs the app, packs a DMG, tags the current commit `v1.1` and creates the GitHub release with install notes. CI only tests and builds pull requests and `main`.
+It runs the tests, builds and signs the app, packs a DMG, tags the current commit `v1.1` and creates the GitHub release with install notes. Then it signs the DMG with the Sparkle EdDSA key, adds it to `appcast.xml` and pushes that to `main`, where installed copies look for updates. CI only tests and builds pull requests and `main`.
+
+The EdDSA private key is in the login Keychain under the account `RepoRadar` (Sparkle's `generate_keys --account RepoRadar`); its public half is `SUPublicEDKey` in `build.sh`. Without the private key no update can be published, so keep a backup. Debug builds never update themselves.
 
 ## Signing in
 
@@ -136,7 +139,7 @@ Sources/RepoRadar/
 ├── InboxView.swift, ThreadView.swift, Detail.swift, AutoRead.swift
 ├── PullsView.swift, PullDetailView.swift
 ├── ActionsView.swift, RunDetailView.swift, WorkflowGraph.swift, JobGraphView.swift
-├── MenuBarContent.swift, Alerts.swift, Commands.swift
+├── MenuBarContent.swift, Alerts.swift, Commands.swift, Updates.swift
 ├── SettingsView.swift, FontTheme.swift, Markdown.swift
 Tests/RepoRadarTests/       # engine, page models, alerts and accessibility tests
 ```
