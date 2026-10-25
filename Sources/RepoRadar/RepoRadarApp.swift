@@ -25,6 +25,14 @@ struct RepoRadarApp: App {
             SettingsView().environment(state).appliesFontTheme()
         }
 
+        // A job's log on its own, beside the main window (A6).
+        WindowGroup("Job Log", id: "job-log", for: JobLogRef.self) { $ref in
+            if let ref {
+                JobLogWindow(ref: ref).environment(state).appliesFontTheme().toasts(state.toasts)
+            }
+        }
+        .restorationBehavior(.disabled)
+
         #if DEBUG
         Window("Component Gallery", id: "gallery") {
             ComponentGallery().appliesFontTheme()

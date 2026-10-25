@@ -540,7 +540,7 @@ struct ChecksPanel: View {
                         guard let plot = proxy.plotFrame, let name: String = proxy.value(atY: location.y - geometry[plot].minY),
                               let check = checks.first(where: { $0.name == name }) else { return }
                         if let run = check.runID {
-                            state.navigate(to: .actions, select: .run(run))
+                            state.navigate(to: .actions, select: check.jobID.map { .job(run: run, job: $0) } ?? .run(run))
                         } else if let url = check.url {
                             state.open([url])
                         }

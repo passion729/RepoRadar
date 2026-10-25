@@ -20,6 +20,8 @@ final class AppState {
     private(set) var latestRuns: [WorkflowRun] = []
     /// Runs awaiting the user's confirmation before they're cancelled.
     var pendingCancel: [WorkflowRun] = []
+    /// Each workflow's last 20 default-branch runs (oldest first), keyed by `Workflows.key`; loaded as rows appear.
+    private(set) var workflowHistory: [String: [WorkflowRun]] = [:]
 
     // MARK: Inbox & pull requests
 
@@ -178,6 +180,19 @@ final class AppState {
         runsByRepo.values.joined()
             .filter { $0.state.isActive && !$0.isAwaitingApproval && inScope($0.repo) }
             .sorted { ($0.actor?.login == login ? 0 : 1, $0.createdAt) < ($1.actor?.login == login ? 0 : 1, $1.createdAt) }
+    }
+
+    /// A workflow's default-branch history: loaded runs, or what the repository's recent runs already hold.
+    func history(of workflow: WorkflowSummary) -> [WorkflowRun] {
+        workflowHistory[workflow.id] ?? defaultBranchRuns(of: workflow.repo).filter { $0.workflowId == workflow.workflowId }
+    }
+
+    /// Fetches a workflow's last 20 default-branch runs (an unchanged answer is a free 304).
+    func loadHistory(of workflow: WorkflowSummary) async {
+        guard let runs = try? await client.runs(ofWorkflow: workflow.workflowId, repo: workflow.repo,
+                                                branch: defaultBranches[workflow.repo]) else { return }
+        let ordered = runs.sorted { $0.createdAt < $1.createdAt }
+        if workflowHistory[workflow.id] != ordered { workflowHistory[workflow.id] = ordered }
     }
 
     /// The median of the workflow's last 10 successful runs.
@@ -974,6 +989,8 @@ enum SyncCadence {
 /// What a page should select when asked by another page.
 enum SelectionRequest: Equatable {
     case pull(Int), run(Int), thread(String)
+    /// A run with one of its jobs selected.
+    case job(run: Int, job: Int)
 }
 
 extension Date {

@@ -157,21 +157,23 @@ struct StatusIcon: View {
     }
 }
 
+/// One turn a second, from a timeline rather than a repeating animation: a repeating animation also caught
+/// the ring's first layout move and sent it sliding around for good.
 private struct SpinningRing: View {
     let color: Color
     let lineWidth: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var spinning = false
 
     var body: some View {
-        ZStack {
-            Circle().stroke(color.opacity(0.25), lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: 0.7)
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(spinning && !reduceMotion ? 360 : 0))
-                .animation(reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false), value: spinning)
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+            ZStack {
+                Circle().stroke(color.opacity(0.25), lineWidth: lineWidth)
+                Circle()
+                    .trim(from: 0, to: 0.7)
+                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(reduceMotion ? 0 : turn * 360))
+            }
         }
-        .onAppear { spinning = true }
     }
 }

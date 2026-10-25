@@ -62,6 +62,8 @@ struct WorkflowJob: Decodable, Identifiable, Hashable {
         let name: String
         let status: String?
         let conclusion: String?
+        var startedAt: Date?
+        var completedAt: Date?
         var id: Int { number }
         var state: RunState { RunState(status: status, conclusion: conclusion) }
     }
@@ -74,6 +76,8 @@ struct WorkflowJob: Decodable, Identifiable, Hashable {
     let completedAt: Date?
     let htmlUrl: URL?
     let steps: [Step]?
+    var runnerName: String?
+    var labels: [String]?
 
     var state: RunState { RunState(status: status, conclusion: conclusion) }
 

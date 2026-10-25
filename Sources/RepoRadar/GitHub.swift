@@ -125,7 +125,7 @@ actor GitHubClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request, delegate: RedirectWithoutToken.shared)
         if path == "/notifications", let interval = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Poll-Interval") {
             pollInterval = Int(interval)
         }
@@ -190,6 +190,14 @@ actor GitHubClient {
         return page.workflowRuns
     }
 
+    /// One workflow's latest runs, on a branch if given (the run cells and pass rate use the default branch).
+    func runs(ofWorkflow id: Int, repo: String, branch: String?, count: Int = 20) async throws -> [WorkflowRun] {
+        var query = ["per_page": "\(count)"]
+        if let branch { query["branch"] = branch }
+        let page: WorkflowRunsPage = try await get("/repos/\(repo)/actions/workflows/\(id)/runs", query: query)
+        return page.workflowRuns
+    }
+
     func runs(of repo: String, headSHA: String) async throws -> [WorkflowRun] {
         let page: WorkflowRunsPage = try await get("/repos/\(repo)/actions/runs", query: ["head_sha": headSHA, "per_page": "30"])
         return page.workflowRuns
@@ -216,6 +224,10 @@ actor GitHubClient {
         return page.workflowRuns
             .filter { $0.workflowName == hint.workflow }
             .min { abs($0.updatedAt.timeIntervalSince(notification.updatedAt)) < abs($1.updatedAt.timeIntervalSince(notification.updatedAt)) }
+    }
+
+    func job(_ id: Int, repo: String) async throws -> WorkflowJob {
+        try await get("/repos/\(repo)/actions/jobs/\(id)")
     }
 
     func jobs(of run: WorkflowRun) async throws -> [WorkflowJob] {
@@ -630,6 +642,21 @@ actor GitHubClient {
                 additions: node.additions ?? 0, deletions: node.deletions ?? 0)
         }
         return (statuses, Set(result.direct.nodes.compactMap(\.key)))
+    }
+}
+
+/// Follows redirects but drops the token when one leaves the API host: job logs redirect to signed blob
+/// storage URLs, which refuse a request that carries GitHub's Authorization header.
+private final class RedirectWithoutToken: NSObject, URLSessionTaskDelegate, Sendable {
+    static let shared = RedirectWithoutToken()
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        guard request.url?.host != task.originalRequest?.url?.host else { return request }
+        var stripped = request
+        stripped.setValue(nil, forHTTPHeaderField: "Authorization")
+        stripped.setValue(nil, forHTTPHeaderField: "If-None-Match")
+        return stripped
     }
 }
 
