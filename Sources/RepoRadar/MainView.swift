@@ -228,6 +228,7 @@ struct Sidebar: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Page.allCases) { item in
                         NavRow(page: item, isSelected: page == item, badge: badge(for: item)) { page = item }
+                        if item == .pulls && page == .pulls { PullListRows() }
                     }
                     PinnedRepos()
                         .padding(.top, 16)
@@ -285,6 +286,36 @@ private struct NavRow: View {
         .help("\(page.title) (⌘\(page.shortcut.character))")
         .accessibilityLabel(badge.map { "\(page.title), \($0.count)" } ?? page.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Waiting on you / Yours / Mentioned under Pull Requests while it's open (P1).
+private struct PullListRows: View {
+    @Environment(AppState.self) private var state
+    @SceneStorage("pullList") private var list: PullList = .waiting
+
+    var body: some View {
+        ForEach(PullList.allCases) { option in
+            let count = state.pulls.count { state.inScope($0.repo) && option.matches($0) }
+            Button { list = option } label: {
+                HStack {
+                    Text(option.title)
+                        .textStyle(.rowTitle)
+                        .fontWeight(list == option ? .semibold : .regular)
+                        .foregroundStyle(Theme.Ink.primary)
+                    Spacer()
+                    if count > 0 { Badge(count: count, tone: option == .waiting ? .blue : .neutral) }
+                }
+                .padding(.leading, 38)
+                .padding(.trailing, 8)
+                .frame(height: 28)
+                .background(list == option ? Theme.Fill.subtle : .clear, in: .rect(cornerRadius: Theme.Radius.nav))
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(option.title), \(count)")
+            .accessibilityAddTraits(list == option ? .isSelected : [])
+        }
     }
 }
 

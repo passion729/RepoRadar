@@ -189,19 +189,6 @@ enum PRRole: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
-    var title: String {
-        switch self {
-        case .reviewRequested: "Review Requested"
-        case .authored: "Authored"
-        case .assigned: "Assigned"
-        case .mentioned: "Mentioned"
-        }
-    }
-
-    var shortTitle: String {
-        self == .reviewRequested ? "Reviews" : title
-    }
-
     var qualifier: String {
         switch self {
         case .reviewRequested: "review-requested:@me"
@@ -225,12 +212,10 @@ struct PullItem: Identifiable, Hashable {
     var repo: String { pr.repo }
     var author: String { pr.user.login }
     var comments: Int { pr.comments }
-    var isDraftRank: Int { pr.isDraft ? 1 : 0 }
     var number: Int { pr.number }
     var updatedAt: Date { pr.updatedAt }
     /// Changes with any new activity on the pull request, so viewing it again is needed.
     var seenKey: String { "pr-\(pr.id)-\(pr.updatedAt.timeIntervalSince1970)" }
-    var rolesSummary: String { PRRole.allCases.filter(roles.contains).map(\.title).joined(separator: ", ") }
 }
 
 /// "owner/repo#number": the same key for an issue, a pull request and their notification threads.
@@ -256,10 +241,46 @@ struct PullStatus: Hashable {
     /// CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, HAS_HOOKS, DRAFT or UNKNOWN.
     let mergeState: String?
     let checks: Checks
+    /// MERGEABLE, CONFLICTING or UNKNOWN.
+    var mergeable: String?
+    var counts = CheckCounts()
+    var approvals = 0
+    var additions = 0
+    var deletions = 0
 
     /// Checks pass, enough approvals, no conflicts.
     var isReadyToMerge: Bool { mergeState == "CLEAN" || mergeState == "HAS_HOOKS" }
     var needsChanges: Bool { reviewDecision == "CHANGES_REQUESTED" || checks == .failing }
+}
+
+/// Checks of a commit by outcome, from GraphQL's `checkRunCountsByState` / `statusContextCountsByState`.
+struct CheckCounts: Hashable {
+    var passed = 0, failed = 0, running = 0, skipped = 0
+    var total: Int { passed + failed + running }
+
+    init() {}
+
+    init(checkRuns: [String: Int], statuses: [String: Int]) {
+        for (state, count) in checkRuns {
+            switch state {
+            case "SUCCESS", "NEUTRAL": passed += count
+            case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE": failed += count
+            case "SKIPPED", "STALE", "CANCELLED": skipped += count
+            default: running += count  // QUEUED, IN_PROGRESS, PENDING, WAITING, REQUESTED
+            }
+        }
+        for (state, count) in statuses {
+            switch state {
+            case "SUCCESS": passed += count
+            case "FAILURE", "ERROR": failed += count
+            default: running += count  // PENDING, EXPECTED
+            }
+        }
+    }
+
+    var overall: PullStatus.Checks {
+        failed > 0 ? .failing : running > 0 ? .pending : passed > 0 ? .passing : .none
+    }
 }
 
 /// An environment a run is waiting on (GET …/pending_deployments).
@@ -327,6 +348,27 @@ struct PullSummary: Hashable {
     struct Check: Hashable {
         let name: String
         let state: StatusKind
+        var startedAt: Date?
+        var completedAt: Date?
+        /// The Actions job (check run) id, and its run.
+        var jobID: Int?
+        var runID: Int?
+        var url: URL?
+    }
+
+    struct Reviewer: Hashable {
+        enum State: Hashable { case requested, approved, changesRequested, commented, dismissed }
+        let name: String
+        let isTeam: Bool
+        var state: State
+        var isCodeOwner: Bool
+    }
+
+    struct FileChange: Hashable {
+        let path: String
+        let additions: Int
+        let deletions: Int
+        var viewed: Bool
     }
 
     var body: String
@@ -344,6 +386,38 @@ struct PullSummary: Hashable {
     var changesRequestedBy: [String]
     var pendingReviewers: Int
     var checks: [Check]
+
+    /// GraphQL node id, for mutations (viewed files, auto-merge).
+    var id = ""
+    var title = ""
+    var url: URL?
+    var isDraft = false
+    /// OPEN, CLOSED or MERGED.
+    var state = "OPEN"
+    var createdAt: Date?
+    var viewerDidAuthor = false
+    var commitCount = 0
+    /// Issues this pull request closes, as "repo #n".
+    var closingIssues: [String] = []
+    /// Who turned on auto-merge, when it's on.
+    var autoMergeBy: String?
+    var reviewers: [Reviewer] = []
+    var files: [FileChange] = []
+    /// You can merge (write access or more).
+    var canWrite = false
+    /// Allowed merge methods in GitHub's order: squash, merge, rebase.
+    var mergeMethods: [String] = ["squash"]
+    var autoMergeAllowed = false
+}
+
+/// A changed file with its unified diff (REST; `patch` is missing for binary or very large files).
+struct PullFile: Decodable, Hashable, Identifiable {
+    let filename: String
+    let status: String
+    let additions: Int
+    let deletions: Int
+    let patch: String?
+    var id: String { filename }
 }
 
 /// A check run annotation: a failing test or lint error with its location.

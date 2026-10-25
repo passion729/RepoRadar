@@ -202,3 +202,87 @@ enum LabelColors {
         return channel(16) | channel(8) | channel(0)
     }
 }
+
+// MARK: - Pull request list
+
+extension Readiness {
+    /// The three 8 pt dots of a list row (P2), checks · reviews · mergeable, each with words for the tooltip.
+    static func dots(_ status: PullStatus?) -> [(state: StatusKind, text: String)] {
+        guard let status else { return [(.skipped, "checks unknown"), (.skipped, "reviews unknown"), (.skipped, "mergeability unknown")] }
+        let counts = status.counts
+        let checks: (StatusKind, String) = switch status.checks {
+        case .failing: (.failure, "\(counts.failed) \(counts.failed == 1 ? "check" : "checks") failing")
+        case .pending: (.running, "\(counts.running) \(counts.running == 1 ? "check" : "checks") running")
+        case .passing: (.success, "checks passed")
+        case .none: (.skipped, "no checks")
+        }
+        let reviews: (StatusKind, String) = switch status.reviewDecision {
+        case "APPROVED": (.success, "approved")
+        case "CHANGES_REQUESTED": (.failure, "changes requested")
+        case "REVIEW_REQUIRED": (.waiting, "\(status.approvals) \(status.approvals == 1 ? "approval" : "approvals"), review required")
+        default: (status.approvals > 0 ? .success : .skipped, status.approvals > 0 ? "\(status.approvals) approvals" : "no review required")
+        }
+        let mergeable: (StatusKind, String) = if status.mergeable == "CONFLICTING" || status.mergeState == "DIRTY" {
+            (.failure, "conflicts")
+        } else if status.mergeState == "BEHIND" {
+            (.waiting, "behind base")
+        } else if status.mergeable == "MERGEABLE" {
+            (.success, "no conflicts")
+        } else {
+            (.skipped, "checking conflicts")
+        }
+        return [checks, reviews, mergeable]
+    }
+
+    /// The first real problem among the dots ("1 check running", "conflicts"), or how it stands without one.
+    static func blockerText(_ status: PullStatus?) -> String {
+        let dots = dots(status)
+        if let problem = dots.first(where: { [.failure, .running, .waiting].contains($0.state) }) { return problem.text }
+        return status?.isReadyToMerge == true ? "ready to merge" : dots.first(where: { $0.state == .skipped })?.text ?? "ready to merge"
+    }
+
+    /// The one tag a pull request of yours shows (P3): the first of Ready, Checks failing, Changes requested, Draft.
+    static func yourTag(_ pull: PullItem) -> (text: String, tone: Tone)? {
+        if let status = pull.status {
+            if status.isReadyToMerge { return ("Ready", .green) }
+            if status.checks == .failing { return ("Checks failing", .red) }
+            if status.reviewDecision == "CHANGES_REQUESTED" { return ("Changes requested", .red) }
+        }
+        return pull.pr.isDraft ? ("Draft", .neutral) : nil
+    }
+}
+
+enum ChangeList {
+    /// Generated files that sort last and draw faded.
+    static func isGenerated(_ path: String) -> Bool {
+        let name = path.split(separator: "/").last.map(String.init) ?? path
+        return ["Package.resolved", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "Gemfile.lock",
+                "go.sum", "poetry.lock", "composer.lock", "Podfile.lock", "bun.lockb", "bun.lock", "uv.lock"].contains(name)
+    }
+
+    /// Biggest change first, generated files last.
+    static func sorted(_ files: [PullSummary.FileChange]) -> [PullSummary.FileChange] {
+        files.sorted { a, b in
+            let (ga, gb) = (isGenerated(a.path), isGenerated(b.path))
+            if ga != gb { return !ga }
+            return a.additions + a.deletions > b.additions + b.deletions
+        }
+    }
+
+    /// Bar length: this file's changed lines against the biggest file's, over `width`.
+    static func barWidth(_ file: PullSummary.FileChange, in files: [PullSummary.FileChange], width: CGFloat = 120) -> CGFloat {
+        let biggest = files.map { $0.additions + $0.deletions }.max() ?? 0
+        guard biggest > 0 else { return 0 }
+        return width * CGFloat(file.additions + file.deletions) / CGFloat(biggest)
+    }
+}
+
+extension Readiness {
+    /// Checks for the timeline: failures first, then by start time.
+    static func timelineOrder(_ checks: [PullSummary.Check]) -> [PullSummary.Check] {
+        checks.filter { $0.startedAt != nil }.sorted { a, b in
+            if (a.state == .failure) != (b.state == .failure) { return a.state == .failure }
+            return (a.startedAt ?? .distantPast, a.name) < (b.startedAt ?? .distantPast, b.name)
+        }
+    }
+}

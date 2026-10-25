@@ -53,7 +53,12 @@ final class AppState {
     }
     /// Bumped after a comment lands, so open threads reload their timeline.
     private(set) var timelineVersion = 0
-    private(set) var pulls: [PullItem] = []
+    /// Open pull requests involving you, without ones just merged here (they leave the list at once, P6).
+    var pulls: [PullItem] {
+        hiddenPulls.isEmpty ? allPulls : allPulls.filter { !hiddenPulls.contains($0.id) }
+    }
+    private var allPulls: [PullItem] = []
+    private var hiddenPulls: Set<Int> = []
     /// Environments waiting runs are blocked on, per run id.
     private(set) var pendingDeployments: [Int: [PendingDeployment]] = [:]
     /// `seenKey`s of runs and pull requests the user has viewed; those stop counting as needing attention.
@@ -216,7 +221,7 @@ final class AppState {
     /// Drops newly excluded data right away; bringing a repository back needs a refresh.
     private func exclusionsChanged(reload: Bool) {
         runsByRepo = runsByRepo.filter { !isExcluded($0.key) }
-        pulls.removeAll { isExcluded($0.repo) }
+        allPulls.removeAll { isExcluded($0.repo) }
         inbox.removeAll { isExcluded($0.repo) }
         pinnedRepos.removeAll(where: isExcluded)
         if let scopeRepo, isExcluded(scopeRepo) { self.scopeRepo = nil }
@@ -315,7 +320,8 @@ final class AppState {
             defaultBranches = branches
             runsByRepo = newRuns.filter { !isExcluded($0.key) }
             pendingDeployments = await fetchPendingDeployments()
-            pulls = newPulls.filter { !isExcluded($0.repo) }
+            allPulls = newPulls.filter { !isExcluded($0.repo) }
+            hiddenPulls.formIntersection(allPulls.map(\.id))
             let current = Set(newRuns.values.joined().map(\.seenKey) + newPulls.map(\.seenKey))
             if !seen.isSubset(of: current) { seen.formIntersection(current) }  // forget items that are gone
             apply(newInbox)
@@ -371,7 +377,8 @@ final class AppState {
 
     private func refreshPulls() async {
         guard hasToken, !isRefreshing, let fresh = try? await fetchPulls() else { return }
-        pulls = fresh.filter { !isExcluded($0.repo) }
+        allPulls = fresh.filter { !isExcluded($0.repo) }
+        hiddenPulls.formIntersection(allPulls.map(\.id))
         publishBadge()
     }
 
@@ -472,7 +479,7 @@ final class AppState {
         return items.map { item in
             var item = item
             let key = subjectKey(item.repo, item.number)
-            item.status = statuses[key]
+            item.status = statuses[key] ?? item.status
             item.isDirectReview = direct.contains(key)
             return item
         }
@@ -562,21 +569,72 @@ final class AppState {
         }, commit: {})
     }
 
-    func review(_ pull: PullItem, _ event: GitHubClient.ReviewEvent, body: String? = nil, item: NeedsYouItem? = nil) {
+    /// Submits a review. With `draftKey`, the review bar's draft clears at once and returns if GitHub refuses.
+    func review(_ pull: PullItem, _ event: GitHubClient.ReviewEvent, body: String? = nil, item: NeedsYouItem? = nil,
+                draftKey: String? = nil) {
         let verb = switch event {
         case .approve: "Approved"
         case .requestChanges: "Requested changes on"
         case .comment: "Commented on"
         }
-        act(on: item, "\(verb) \(label(pull.repo, pull.number))",
-            commit: { [client] in try await client.submitReview(pull.pr.ref, event: event, body: body) },
-            reload: { [self] in await refreshPulls() })
+        let draft = draftKey.flatMap { drafts[$0] }
+        actions.perform("\(verb) \(label(pull.repo, pull.number))", apply: { [self] in
+            if let item { hiddenItems.insert(item.revision) }
+            if let draftKey { drafts[draftKey] = nil }
+            publishBadge()
+        }, revert: { [self] in
+            if let item { hiddenItems.remove(item.revision) }
+            if let draftKey { drafts[draftKey] = draft }
+            publishBadge()
+        }, commit: { [client] in
+            try await client.submitReview(pull.pr.ref, event: event, body: body)
+            for thread in item?.notificationIDs ?? [] { try await client.markDone(thread: thread) }
+        }, completed: { [self] in
+            timelineVersion += 1
+            await refreshPulls()
+        }, failed: { [self] in
+            if let item { failedItems.insert(item.id) }
+        })
+    }
+
+    /// Update branch (P5): merges the base branch into a pull request that's behind.
+    func updateBranch(_ pull: PullItem) {
+        act(on: nil, "Updating \(label(pull.repo, pull.number)) with its base",
+            commit: { [client] in try await client.updateBranch(pull.pr.ref) },
+            reload: { [self] in timelineVersion += 1; await refreshPulls() })
+    }
+
+    /// Auto-merge (P6): merges by itself once checks and reviews allow.
+    func setAutoMerge(_ enabled: Bool, pull: PullItem, pullID: String, method: String) {
+        act(on: nil, enabled ? "Auto-merge on for \(label(pull.repo, pull.number))" : "Auto-merge off for \(label(pull.repo, pull.number))",
+            commit: { [client] in try await client.setAutoMerge(enabled, pullID: pullID, method: method) },
+            reload: { [self] in timelineVersion += 1 })
+    }
+
+    /// Re-runs one failed check's job (P8).
+    func rerunJob(_ id: Int, name: String, repo: String) {
+        act(on: nil, "Re-running \(name)",
+            commit: { [client] in try await client.rerunJob(id, repo: repo) },
+            reload: { [self] in timelineVersion += 1; await reloadRuns() })
     }
 
     func merge(_ pull: PullItem, method: String = "squash", deleteBranch: Bool, item: NeedsYouItem? = nil) {
-        act(on: item, "Merged \(label(pull.repo, pull.number))",
-            commit: { [client] in try await client.merge(pull.pr.ref, method: method, deleteBranch: deleteBranch) },
-            reload: { [self] in await refreshPulls() })
+        let id = pull.id
+        actions.perform("Merged \(label(pull.repo, pull.number))", apply: { [self] in
+            if let item { hiddenItems.insert(item.revision) }
+            hiddenPulls.insert(id)
+            publishBadge()
+        }, revert: { [self] in
+            if let item { hiddenItems.remove(item.revision) }
+            hiddenPulls.remove(id)
+            publishBadge()
+        }, commit: { [client] in
+            try await client.merge(pull.pr.ref, method: method, deleteBranch: deleteBranch)
+        }, completed: { [self] in
+            await refreshPulls()
+        }, failed: { [self] in
+            if let item { failedItems.insert(item.id) }
+        })
     }
 
     /// Approves (or rejects) every environment of the run you may review.
@@ -772,7 +830,8 @@ final class AppState {
         scopeRepo = nil
         runsByRepo = [:]
         inbox = []
-        pulls = []
+        allPulls = []
+        hiddenPulls = []
         pendingDeployments = [:]
         hiddenItems = []
         hiddenThreads = []

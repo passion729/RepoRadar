@@ -170,7 +170,7 @@ struct ThreadEntry: Identifiable, Hashable {
     }
 }
 
-private struct ThreadEntryView: View {
+struct ThreadEntryView: View {
     @Environment(AppState.self) private var state
     let entry: ThreadEntry
     let issueAuthor: String
