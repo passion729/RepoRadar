@@ -45,6 +45,21 @@ Built with SwiftUI and Liquid Glass for macOS 26, packaged with Swift Package Ma
 - macOS 26 or later
 - A Swift 6 toolchain (Xcode or the Command Line Tools)
 
+## Install
+
+Download the DMG from [Releases](https://github.com/passion729/RepoRadar/releases) and drag RepoRadar to Applications. Builds run on Apple silicon.
+
+RepoRadar isn't notarized by Apple, so the first launch is blocked with "Apple could not verify…". To allow it once:
+
+1. Open RepoRadar and dismiss the warning.
+2. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to RepoRadar.
+
+Or clear the download flag from Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/RepoRadar.app
+```
+
 ## Build and run
 
 ```bash
@@ -56,6 +71,16 @@ open RepoRadar.app
 ```
 
 `build.sh` signs with the Yuanju Bo team's Apple Development certificate (team `3JNF4FX993`) when it is in your Keychain, so the signature stays stable across rebuilds. Without it (for example in CI) the app is signed ad hoc, which still lets the Keychain and notifications work. Set `SIGN_IDENTITY` to use another certificate, or `SIGN_IDENTITY=-` for ad hoc.
+
+## Releasing
+
+Releases are published from a Mac that has the team certificate, not from CI, so every version carries the same signature and the Keychain keeps trusting the app after an update. On an up-to-date, clean `main`:
+
+```bash
+./release.sh 1.1
+```
+
+It runs the tests, builds and signs the app, packs a DMG, tags the current commit `v1.1` and creates the GitHub release with install notes. CI only tests and builds pull requests and `main`.
 
 ## Signing in
 
