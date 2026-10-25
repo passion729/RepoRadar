@@ -28,6 +28,12 @@ struct PullsView: View {
             }
         }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.pr.htmlUrl))
+        .onChange(of: state.requestedSelection, initial: true) {
+            guard case .pull(let id)? = state.requestedSelection, let pull = state.pulls.first(where: { $0.id == id }) else { return }
+            if !pull.roles.contains(role) { role = PRRole.allCases.first(where: pull.roles.contains) ?? role }
+            selection = [id]
+            state.requestedSelection = nil
+        }
         .focusesTable(onChangeOf: selection)
         .autoRead(selection, when: selectedItems.count == 1 && state.needsAttention(selectedItems[0])) {
             state.markSeen(selectedItems.map(\.seenKey))

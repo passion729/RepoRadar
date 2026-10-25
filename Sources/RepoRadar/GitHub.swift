@@ -259,6 +259,87 @@ actor GitHubClient {
         try await get("/repos/\(ref.repo)/issues/\(ref.number)/comments", query: ["per_page": "50"])
     }
 
+    /// The comment at an API URL, such as a notification's `latest_comment_url`.
+    func comment(at url: URL) async throws -> IssueComment {
+        try await get(url.path)
+    }
+
+    /// A job's plain-text log; only the last 5 MB of very long logs.
+    func log(ofJob id: Int, repo: String) async throws -> String {
+        let data = try await send("/repos/\(repo)/actions/jobs/\(id)/logs")
+        return String(decoding: data.suffix(5_000_000), as: UTF8.self)
+    }
+
+    /// Annotations of a check run; an Actions job's id is its check run id.
+    func annotations(checkRun id: Int, repo: String) async throws -> [Annotation] {
+        try await get("/repos/\(repo)/check-runs/\(id)/annotations", query: ["per_page": "50"])
+    }
+
+    /// Readiness, size and body of one pull request in a single GraphQL call.
+    func pullSummary(_ ref: IssueRef) async throws -> PullSummary {
+        struct Login: Decodable { let login: String }
+        struct Review: Decodable { let state: String; let author: Login? }
+        struct Context: Decodable {
+            let name: String?, status: String?, conclusion: String?  // CheckRun
+            let context: String?, state: String?                     // StatusContext
+        }
+        struct Pull: Decodable {
+            struct Nodes<T: Decodable>: Decodable { let nodes: [T] }
+            struct Count: Decodable { let totalCount: Int }
+            struct Commit: Decodable {
+                struct Inner: Decodable {
+                    struct Rollup: Decodable { let contexts: Nodes<Context> }
+                    let statusCheckRollup: Rollup?
+                }
+                let commit: Inner
+            }
+            let body: String
+            let author: Login?
+            let additions: Int, deletions: Int, changedFiles: Int
+            let headRefName: String, baseRefName: String
+            let mergeable: String
+            let mergeStateStatus: String?
+            let reviewDecision: String?
+            let latestOpinionatedReviews: Nodes<Review>
+            let reviewRequests: Count
+            let commits: Nodes<Commit>
+        }
+        struct Repository: Decodable { let pullRequest: Pull }
+        struct Result: Decodable { let repository: Repository }
+        let parts = ref.repo.split(separator: "/")
+        let result: Result = try await graphQL("""
+        query {
+          repository(owner: "\(parts[0])", name: "\(parts[1])") {
+            pullRequest(number: \(ref.number)) {
+              body author { login } additions deletions changedFiles headRefName baseRefName
+              mergeable mergeStateStatus reviewDecision
+              latestOpinionatedReviews(first: 30) { nodes { state author { login } } }
+              reviewRequests(first: 1) { totalCount }
+              commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+                ... on CheckRun { name status conclusion }
+                ... on StatusContext { context state }
+              } } } } } }
+            }
+          }
+        }
+        """)
+        let pull = result.repository.pullRequest
+        let reviews = pull.latestOpinionatedReviews.nodes
+        let contexts = pull.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes ?? []
+        return PullSummary(
+            body: pull.body, author: pull.author?.login ?? "ghost",
+            additions: pull.additions, deletions: pull.deletions, changedFiles: pull.changedFiles,
+            headRef: pull.headRefName, baseRef: pull.baseRefName, mergeable: pull.mergeable,
+            mergeState: pull.mergeStateStatus, reviewDecision: pull.reviewDecision,
+            approvedBy: reviews.filter { $0.state == "APPROVED" }.compactMap(\.author?.login),
+            changesRequestedBy: reviews.filter { $0.state == "CHANGES_REQUESTED" }.compactMap(\.author?.login),
+            pendingReviewers: pull.reviewRequests.totalCount,
+            checks: contexts.map { context in
+                PullSummary.Check(name: context.name ?? context.context ?? "check",
+                                  state: Readiness.checkState(status: context.status, conclusion: context.conclusion, state: context.state))
+            })
+    }
+
     // MARK: Reviews, merging, comments (redesign §7)
 
     enum ReviewEvent: String { case approve = "APPROVE", requestChanges = "REQUEST_CHANGES", comment = "COMMENT" }

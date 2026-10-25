@@ -130,6 +130,11 @@ struct SearchField: View {
     let prompt: String
     @Binding var text: String
     var shortcut: String? = "⌘K"
+    /// Reports when the field gains or loses the cursor.
+    var onFocusChange: ((Bool) -> Void)?
+    /// Arrow keys and return while typing (for a results list); return `.ignored` to let the field have them.
+    var onKey: ((KeyPress) -> KeyPress.Result)?
+    @FocusState private var isFocused: Bool
 
     static let toolbarPrompt = "Search or jump to…"
 
@@ -158,6 +163,9 @@ struct SearchField: View {
             TextField(prompt, text: $text, prompt: Text(prompt).foregroundStyle(Theme.Ink.tertiary))
                 .textFieldStyle(.plain)
                 .textStyle(.meta)
+                .focused($isFocused)
+                .onChange(of: isFocused) { _, focused in onFocusChange?(focused) }
+                .onKeyPress(keys: [.upArrow, .downArrow, .return], phases: .down) { press in onKey?(press) ?? .ignored }
                 .onExitCommand { text = "" }
             if !text.isEmpty {
                 Button("Clear Search", systemImage: "xmark.circle.fill") { text = "" }

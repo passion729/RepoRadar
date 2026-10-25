@@ -43,6 +43,8 @@ struct MainView: View {
     @Environment(AppState.self) private var state
     @SceneStorage("page") private var page: Page = .now
     @State private var search = ""
+    @State private var isSearching = false
+    @State private var jumpIndex = 0
 
     var body: some View {
         @Bindable var state = state
@@ -56,6 +58,7 @@ struct MainView: View {
         }
         .toasts(state.toasts)
         .onChange(of: page) { search = "" }
+        .onChange(of: search) { jumpIndex = 0 }
         .onChange(of: state.requestedPage, initial: true) {
             guard let requested = state.requestedPage else { return }
             page = requested
@@ -75,6 +78,22 @@ struct MainView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topTrailing) {
+                if isSearching, !search.isEmpty {
+                    JumpResults(results: jumpResults, selected: jumpIndex, open: open)
+                        .padding(.top, 8)
+                        .padding(.trailing, 12)
+                }
+            }
+            .confirmationDialog(
+                state.pendingCancel.count == 1 ? "Cancel this run?" : "Cancel \(state.pendingCancel.count) runs?",
+                isPresented: Binding(get: { !state.pendingCancel.isEmpty }, set: { if !$0 { state.pendingCancel = [] } })
+            ) {
+                Button("Cancel Run", role: .destructive) { state.confirmCancel() }
+                Button("Keep Running", role: .cancel) {}
+            } message: {
+                Text("GitHub stops the in-progress jobs. You can re-run them afterwards.")
+            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let error = state.error {
                     ErrorBanner(message: error) { state.error = nil }
@@ -94,7 +113,12 @@ struct MainView: View {
             .sharedBackgroundVisibility(.hidden)
         }
         ToolbarItem(placement: .primaryAction) {
-            SearchField(prompt: SearchField.toolbarPrompt, text: $search)
+            SearchField(prompt: SearchField.toolbarPrompt, text: $search,
+                        onFocusChange: { focused in
+                            // Let a click on a result land before the list goes away.
+                            if focused { isSearching = true } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { isSearching = false } }
+                        },
+                        onKey: handleJumpKey)
                 .frame(width: 280)
         }
         .sharedBackgroundVisibility(.hidden)
@@ -107,6 +131,42 @@ struct MainView: View {
             AccountButton()
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+extension MainView {
+    var jumpResults: [JumpResult] {
+        Jump.results(JumpQuery(search), repos: state.repos, pulls: state.pulls, notifications: state.notifications,
+                     runs: Array(state.runsByRepo.values.joined()))
+    }
+
+    /// ↑↓ pick a result, ↵ opens it in RepoRadar, ⌘↵ in the browser.
+    func handleJumpKey(_ press: KeyPress) -> KeyPress.Result {
+        let results = jumpResults
+        guard !search.isEmpty, !results.isEmpty else { return .ignored }
+        switch press.key {
+        case .downArrow: jumpIndex = min(jumpIndex + 1, results.count - 1)
+        case .upArrow: jumpIndex = max(jumpIndex - 1, 0)
+        case .return: open(results[min(jumpIndex, results.count - 1)], inBrowser: press.modifiers.contains(.command))
+        default: return .ignored
+        }
+        return .handled
+    }
+
+    func open(_ result: JumpResult, inBrowser: Bool) {
+        search = ""
+        isSearching = false
+        if inBrowser {
+            state.open([result.webURL])
+            return
+        }
+        switch result.target {
+        case .repo(let repo): state.scopeRepo = repo
+        case .pull(let pull): state.navigate(to: .pulls, select: .pull(pull.id))
+        case .issue(let note): state.navigate(to: .inbox, select: .thread(note.id))
+        case .workflow(let run): state.navigate(to: .actions, select: .run(run.id))
+        case .web(let url): state.open([url])
+        }
     }
 }
 

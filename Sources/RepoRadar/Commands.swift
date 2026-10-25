@@ -35,6 +35,8 @@ struct AppCommands: Commands {
     @FocusedValue(\.selectedRuns) private var selectedRuns
     @FocusedValue(\.selectedNotifications) private var selectedNotifications
     @FocusedBinding(\.page) private var page
+    @FocusedBinding(\.inspector) private var inspector
+    @FocusedValue(\.queueCommands) private var queue
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -71,10 +73,31 @@ struct AppCommands: Commands {
                     .disabled(page == nil)
             }
             Divider()
+            Button(inspector == true ? "Hide Running and Health" : "Show Running and Health") { inspector?.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(inspector == nil)
+            Divider()
             Button("Refresh") { Task { await state.refresh() } }
                 .keyboardShortcut("r")
                 .disabled(state.isRefreshing || !state.hasToken)
             Divider()
+        }
+
+        // The Now queue's keys. Single letters work only while the queue has focus (never in a text field).
+        CommandMenu("Queue") {
+            Group {
+                Button("Next Item") { queue?.move(1) }.keyboardShortcut("j", modifiers: [])
+                Button("Previous Item") { queue?.move(-1) }.keyboardShortcut("k", modifiers: [])
+                Button("Expand or Collapse") { queue?.toggle() }.keyboardShortcut(.return, modifiers: [])
+                Divider()
+                Button("Approve") { queue?.primary() }.keyboardShortcut("a", modifiers: [])
+                Button("Re-run Failed Jobs") { queue?.primary() }.keyboardShortcut("r", modifiers: [])
+                Button("Squash and Merge") { queue?.merge() }.keyboardShortcut("m", modifiers: [.command, .shift])
+                Divider()
+                Button("Done") { queue?.done() }.keyboardShortcut("e", modifiers: [])
+                Button("Snooze…") { queue?.snooze() }.keyboardShortcut("s", modifiers: [])
+            }
+            .disabled(queue == nil)
         }
 
         CommandMenu("Notification") {

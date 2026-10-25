@@ -321,6 +321,39 @@ struct PullDetail: Decodable, Hashable {
     let requestedReviewers: [Actor]
 }
 
+/// What the Now queue and the pull request page show about one pull request (GraphQL).
+struct PullSummary: Hashable {
+    struct Check: Hashable {
+        let name: String
+        let state: StatusKind
+    }
+
+    var body: String
+    var author: String
+    var additions: Int
+    var deletions: Int
+    var changedFiles: Int
+    var headRef: String
+    var baseRef: String
+    /// MERGEABLE, CONFLICTING or UNKNOWN.
+    var mergeable: String
+    var mergeState: String?
+    var reviewDecision: String?
+    var approvedBy: [String]
+    var changesRequestedBy: [String]
+    var pendingReviewers: Int
+    var checks: [Check]
+}
+
+/// A check run annotation: a failing test or lint error with its location.
+struct Annotation: Decodable, Hashable {
+    let path: String?
+    let startLine: Int?
+    let annotationLevel: String?
+    let title: String?
+    let message: String
+}
+
 struct IssueComment: Decodable, Identifiable, Hashable {
     let id: Int
     let user: Actor
@@ -336,6 +369,8 @@ struct GitHubNotification: Decodable, Identifiable, Hashable {
         let title: String
         let type: String  // PullRequest, Issue, Release, Discussion, CheckSuite, Commit…
         let url: URL?
+        /// The comment that triggered the thread (API URL), e.g. the one that @-mentions you.
+        let latestCommentUrl: URL?
     }
 
     let id: String

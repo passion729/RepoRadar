@@ -68,6 +68,8 @@ final class AppState {
     private(set) var failure: SyncFailure?
     /// Set by the menu bar extra to jump the main window to a page.
     var requestedPage: Page?
+    /// Something a page should select once it appears (set with `navigate(to:select:)`).
+    var requestedSelection: SelectionRequest?
 
     // MARK: Scope
 
@@ -138,6 +140,24 @@ final class AppState {
         pulls.count { inScope($0.repo) && ($0.roles.contains(.authored) || ($0.roles.contains(.reviewRequested) && !$0.pr.isDraft)) }
     }
     var scopedFailingCount: Int { latestRuns.count { inScope($0.repo) && $0.state == .failure } }
+
+    /// Runs in progress within scope (not those paused for a deployment review): yours first, then oldest first.
+    var runningRuns: [WorkflowRun] {
+        runsByRepo.values.joined()
+            .filter { $0.state.isActive && !$0.isAwaitingApproval && inScope($0.repo) }
+            .sorted { ($0.actor?.login == login ? 0 : 1, $0.createdAt) < ($1.actor?.login == login ? 0 : 1, $1.createdAt) }
+    }
+
+    /// The median of the workflow's last 10 successful runs.
+    func usualDuration(of run: WorkflowRun) -> TimeInterval? {
+        RunStats.usualDuration(ofWorkflow: run.workflowId, in: runsByRepo[run.repo] ?? [])
+    }
+
+    /// Switches the main window to `page` and asks it to select something.
+    func navigate(to page: Page, select selection: SelectionRequest? = nil) {
+        requestedSelection = selection
+        requestedPage = page
+    }
 
     /// A repository's runs on its default branch, oldest first.
     func defaultBranchRuns(of repo: String) -> [WorkflowRun] {
@@ -775,5 +795,23 @@ enum SyncCadence {
         if let pollInterval { delay = max(delay, .seconds(pollInterval)) }
         if let limit = rateLimit, Double(limit.remaining) < Double(limit.limit) * 0.05 { delay = max(delay, .seconds(120)) }
         return delay
+    }
+}
+
+/// What a page should select when asked by another page.
+enum SelectionRequest: Equatable {
+    case pull(Int), run(Int), thread(String)
+}
+
+extension Date {
+    /// "now", "12m", "3h", "2d".
+    func shortAge(now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(self))
+        switch seconds {
+        case ..<60: return "now"
+        case ..<3600: return "\(Int(seconds / 60))m"
+        case ..<86_400: return "\(Int(seconds / 3600))h"
+        default: return "\(Int(seconds / 86_400))d"
+        }
     }
 }

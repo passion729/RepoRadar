@@ -57,6 +57,12 @@ struct InboxView: View {
         .focusesTable(onChangeOf: selection)
         .autoRead(selection, when: selectedItems.count == 1 && selectedItems[0].unread) { state.markRead(selectedItems) }
         .focusedSceneValue(\.selectedURLs, selectedItems.map(\.webURL))
+        .onChange(of: state.requestedSelection, initial: true) {
+            guard case .thread(let id)? = state.requestedSelection else { return }
+            if !(state.notifications.first { $0.id == id }.map(filter.matches) ?? true) { filter = .all }
+            selection = [id]
+            state.requestedSelection = nil
+        }
     }
 
     @ViewBuilder private var emptyState: some View {

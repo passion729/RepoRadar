@@ -60,14 +60,11 @@ struct ActionsView: View {
                 DetailPlaceholder()
             }
         }
-        .confirmationDialog(
-            state.pendingCancel.count == 1 ? "Cancel this run?" : "Cancel \(state.pendingCancel.count) runs?",
-            isPresented: isConfirmingCancel
-        ) {
-            Button("Cancel Run", role: .destructive) { state.confirmCancel() }
-            Button("Keep Running", role: .cancel) {}
-        } message: {
-            Text("GitHub stops the in-progress jobs. You can re-run them afterwards.")
+        .onChange(of: state.requestedSelection, initial: true) {
+            guard case .run(let id)? = state.requestedSelection else { return }
+            if !scopedRuns.contains(where: { $0.id == id }) { filter = .all }
+            selection = [id]
+            state.requestedSelection = nil
         }
         .focusedSceneValue(\.selectedRuns, selectedRuns)
         .focusesTable(onChangeOf: selection)
@@ -90,10 +87,6 @@ struct ActionsView: View {
                 description: Text(filter == .all ? "Repositories pushed to recently show their runs here." : "Nothing matches this filter.")
             )
         }
-    }
-
-    private var isConfirmingCancel: Binding<Bool> {
-        Binding(get: { !state.pendingCancel.isEmpty }, set: { if !$0 { state.pendingCancel = [] } })
     }
 
     /// Runs in scope, before the status filter and search.
