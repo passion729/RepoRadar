@@ -4,11 +4,32 @@ import Security
 struct RateLimit: Hashable {
     let remaining: Int
     let limit: Int
+    /// When the quota refills.
+    var reset: Date?
 }
 
 struct GitHubError: LocalizedError {
+    /// GitHub's own reason, e.g. "At least 2 approving reviews are required by reviewers with write access."
     let message: String
-    var errorDescription: String? { message }
+    /// HTTP status, when the error came from a response.
+    var status: Int?
+    var errorDescription: String? { status.map { "GitHub HTTP \($0): \(message)" } ?? message }
+
+    /// The reason from an error response: `message` plus any `errors` details (objects or plain strings).
+    static func reason(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let details = (json["errors"] as? [Any] ?? []).compactMap { item -> String? in
+            if let text = item as? String { return text }
+            guard let object = item as? [String: Any] else { return nil }
+            return object["message"] as? String ?? (object["code"] as? String).map { "\($0) \(object["field"] as? String ?? "")" }
+        }
+        let message = json["message"] as? String
+        return ([message].compactMap { $0 } + details).joined(separator: ": ").nilIfEmpty
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Keychain storage for the GitHub token.
@@ -20,6 +41,13 @@ enum Keychain {
     ]
 
     static func save(_ token: String) {
+        #if DEBUG
+        // The dev token file wins over the Keychain in debug builds, so a new sign-in has to replace it too.
+        let devFile = NSHomeDirectory() + "/.reporadar-dev-token"
+        if FileManager.default.fileExists(atPath: devFile) {
+            try? token.write(toFile: devFile, atomically: true, encoding: .utf8)
+        }
+        #endif
         SecItemDelete(base as CFDictionary)
         var attributes = base
         attributes[kSecValueData as String] = Data(token.utf8)
@@ -55,6 +83,14 @@ actor GitHubClient {
     private var cache: [URL: (etag: String, data: Data)] = [:]
     /// Core REST quota from the latest response headers (search has its own, smaller quota).
     private(set) var rateLimit: RateLimit?
+    /// Seconds GitHub asks to wait between notification polls (`X-Poll-Interval`).
+    private(set) var pollInterval: Int?
+    /// The classic token's scopes (`X-OAuth-Scopes`); nil until a response says, and for fine-grained tokens,
+    /// which don't report any.
+    private(set) var scopes: Set<String>?
+
+    /// Whether the token can read team names (GraphQL needs read:org for them). Unknown counts as no.
+    var canReadOrgs: Bool { scopes?.contains("read:org") == true || scopes?.contains("admin:org") == true }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -62,14 +98,19 @@ actor GitHubClient {
         return decoder
     }()
 
-    func resetCache() { cache = [:] }
+    func resetCache() {
+        cache = [:]
+        scopes = nil
+    }
 
     @discardableResult
-    private func send(_ path: String, query: [String: String] = [:], method: String = "GET") async throws -> Data {
-        guard let token = Keychain.load(), !token.isEmpty else {
-            throw GitHubError(message: "Not signed in to GitHub. Sign in from Settings (⌘,).")
+    private func send(_ path: String, query: [String: String] = [:], method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
+        guard let token = await Credentials.token(), !token.isEmpty else {
+            throw GitHubError(message: Credentials.source == .githubCLI
+                ? "The GitHub CLI isn't signed in to github.com. Run `gh auth login`, or sign in from Settings (⌘,)."
+                : "Not signed in to GitHub. Sign in from Settings (⌘,).", status: 401)
         }
-        var components = URLComponents(string: "https://api.github.com" + path)!
+        var components = URLComponents(string: Config.apiHost + path)!
         if !query.isEmpty { components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
         let url = components.url!
 
@@ -81,18 +122,35 @@ actor GitHubClient {
         if method == "GET", let etag = cache[url]?.etag {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
+        if let body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request, delegate: RedirectWithoutToken.shared)
+        if path == "/notifications", let interval = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Poll-Interval") {
+            pollInterval = Int(interval)
+        }
+        if let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-OAuth-Scopes") {
+            scopes = Set(header.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        }
         if let http = response as? HTTPURLResponse, http.value(forHTTPHeaderField: "X-RateLimit-Resource") == "core",
            let remaining = Int(http.value(forHTTPHeaderField: "X-RateLimit-Remaining") ?? ""),
            let limit = Int(http.value(forHTTPHeaderField: "X-RateLimit-Limit") ?? "") {
-            rateLimit = RateLimit(remaining: remaining, limit: limit)
+            let reset = Double(http.value(forHTTPHeaderField: "X-RateLimit-Reset") ?? "").map(Date.init(timeIntervalSince1970:))
+            rateLimit = RateLimit(remaining: remaining, limit: limit, reset: reset)
         }
         let code = (response as? HTTPURLResponse)?.statusCode ?? -1
         if code == 304, let cached = cache[url] { return cached.data }
+        if code == 401 { await Credentials.invalidate() }  // the CLI's token may have changed
         guard (200..<300).contains(code) else {
-            let message = (try? JSONDecoder().decode([String: String].self, from: data))?["message"]
-            throw GitHubError(message: "GitHub HTTP \(code): \(message ?? String(decoding: data, as: UTF8.self))")
+            let http = response as? HTTPURLResponse
+            // As RepoBar does: a 403/429 with no quota left or a Retry-After is rate limiting, whatever the body says.
+            if [403, 429].contains(code),
+               http?.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0" || http?.value(forHTTPHeaderField: "Retry-After") != nil {
+                throw GitHubError(message: "API rate limit exceeded", status: code)
+            }
+            throw GitHubError(message: GitHubError.reason(from: data) ?? String(decoding: data, as: UTF8.self), status: code)
         }
         if method == "GET", let etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag") {
             cache[url] = (etag, data)
@@ -135,6 +193,25 @@ actor GitHubClient {
         return page.workflowRuns
     }
 
+    /// Ids of a repository's workflows that are turned off: `disabled_manually`, `disabled_inactivity`,
+    /// `disabled_fork`. Needs only the repo scope.
+    func disabledWorkflows(of repo: String) async throws -> [Int] {
+        struct Page: Decodable {
+            struct Workflow: Decodable { let id: Int; let state: String }
+            let workflows: [Workflow]
+        }
+        let page: Page = try await get("/repos/\(repo)/actions/workflows", query: ["per_page": "100"])
+        return page.workflows.filter { $0.state != "active" }.map(\.id)
+    }
+
+    /// One workflow's latest runs, on a branch if given (the run cells and pass rate use the default branch).
+    func runs(ofWorkflow id: Int, repo: String, branch: String?, count: Int = 20) async throws -> [WorkflowRun] {
+        var query = ["per_page": "\(count)"]
+        if let branch { query["branch"] = branch }
+        let page: WorkflowRunsPage = try await get("/repos/\(repo)/actions/workflows/\(id)/runs", query: query)
+        return page.workflowRuns
+    }
+
     func runs(of repo: String, headSHA: String) async throws -> [WorkflowRun] {
         let page: WorkflowRunsPage = try await get("/repos/\(repo)/actions/runs", query: ["head_sha": headSHA, "per_page": "30"])
         return page.workflowRuns
@@ -163,6 +240,10 @@ actor GitHubClient {
             .min { abs($0.updatedAt.timeIntervalSince(notification.updatedAt)) < abs($1.updatedAt.timeIntervalSince(notification.updatedAt)) }
     }
 
+    func job(_ id: Int, repo: String) async throws -> WorkflowJob {
+        try await get("/repos/\(repo)/actions/jobs/\(id)")
+    }
+
     func jobs(of run: WorkflowRun) async throws -> [WorkflowJob] {
         let page: JobsPage = try await get("/repos/\(run.repo)/actions/runs/\(run.id)/jobs", query: ["per_page": "50"])
         return page.jobs
@@ -188,12 +269,32 @@ actor GitHubClient {
         try await get("/notifications", query: ["all": "true", "per_page": "50"])
     }
 
+    /// Marks every thread read up to now, everywhere or in one repository.
+    func markAllRead(repo: String? = nil) async throws {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        try await send(repo.map { "/repos/\($0)/notifications" } ?? "/notifications", method: "PUT",
+                       body: ["last_read_at": stamp, "read": true])
+    }
+
+    /// Mutes a thread: new activity on it won't notify you.
+    func unsubscribe(thread id: String) async throws {
+        try await send("/notifications/threads/\(id)/subscription", method: "DELETE")
+    }
+
+    func markRead(thread id: String) async throws {
+        try await send("/notifications/threads/\(id)", method: "PATCH")
+    }
+
     func markRead(_ notification: GitHubNotification) async throws {
         try await send("/notifications/threads/\(notification.id)", method: "PATCH")
     }
 
     func markDone(_ notification: GitHubNotification) async throws {
-        try await send("/notifications/threads/\(notification.id)", method: "DELETE")
+        try await markDone(thread: notification.id)
+    }
+
+    func markDone(thread id: String) async throws {
+        try await send("/notifications/threads/\(id)", method: "DELETE")
     }
 
     // MARK: Issues & pull requests
@@ -207,6 +308,26 @@ actor GitHubClient {
         return page.items
     }
 
+    func timeline(_ ref: IssueRef) async throws -> [TimelineEvent] {
+        // ponytail: first 100 entries; follow `Link` pages for very long threads.
+        try await get("/repos/\(ref.repo)/issues/\(ref.number)/timeline", query: ["per_page": "100"])
+    }
+
+    func closeIssue(_ ref: IssueRef) async throws {
+        try await send("/repos/\(ref.repo)/issues/\(ref.number)", method: "PATCH", body: ["state": "closed"])
+    }
+
+    /// Whether you can triage (close, label) in a repository.
+    func canTriage(_ repo: String) async throws -> Bool {
+        struct Repository: Decodable {
+            struct Permissions: Decodable { let triage: Bool?; let push: Bool?; let admin: Bool? }
+            let permissions: Permissions?
+        }
+        let repository: Repository = try await get("/repos/\(repo)")
+        let permissions = repository.permissions
+        return permissions?.triage == true || permissions?.push == true || permissions?.admin == true
+    }
+
     func issue(_ ref: IssueRef) async throws -> IssueDetail {
         try await get("/repos/\(ref.repo)/issues/\(ref.number)")
     }
@@ -217,6 +338,339 @@ actor GitHubClient {
 
     func comments(_ ref: IssueRef) async throws -> [IssueComment] {
         try await get("/repos/\(ref.repo)/issues/\(ref.number)/comments", query: ["per_page": "50"])
+    }
+
+    /// The comment at an API URL, such as a notification's `latest_comment_url`.
+    func comment(at url: URL) async throws -> IssueComment {
+        try await get(url.path)
+    }
+
+    /// A job's plain-text log; only the last 5 MB of very long logs.
+    func log(ofJob id: Int, repo: String) async throws -> String {
+        let data = try await send("/repos/\(repo)/actions/jobs/\(id)/logs")
+        return String(decoding: data.suffix(5_000_000), as: UTF8.self)
+    }
+
+    /// Annotations of a check run; an Actions job's id is its check run id.
+    func annotations(checkRun id: Int, repo: String) async throws -> [Annotation] {
+        try await get("/repos/\(repo)/check-runs/\(id)/annotations", query: ["per_page": "50"])
+    }
+
+    /// Everything the pull request page and the Now queue show about one pull request, in one GraphQL call:
+    /// readiness, size, reviewers, files and their viewed state, timed checks, and what you may do.
+    func pullSummary(_ ref: IssueRef) async throws -> PullSummary {
+        struct Login: Decodable { let login: String }
+        struct Nodes<T: Decodable>: Decodable { let nodes: [T] }
+        struct Count: Decodable { let totalCount: Int }
+        struct Review: Decodable { let state: String; let author: Login? }
+        struct Request: Decodable {
+            struct Reviewer: Decodable { let login: String?; let name: String? }
+            let asCodeOwner: Bool
+            let requestedReviewer: Reviewer?
+        }
+        struct Closing: Decodable {
+            struct Repository: Decodable { let name: String }
+            let number: Int
+            let repository: Repository
+        }
+        struct File: Decodable { let path: String; let additions: Int; let deletions: Int; let viewerViewedState: String? }
+        struct Context: Decodable {
+            struct Suite: Decodable { struct Run: Decodable { let databaseId: Int? }; let workflowRun: Run? }
+            let name: String?, status: String?, conclusion: String?, startedAt: Date?, completedAt: Date?
+            let databaseId: Int?, detailsUrl: URL?, checkSuite: Suite?           // CheckRun
+            let context: String?, state: String?, createdAt: Date?, targetUrl: URL?  // StatusContext
+        }
+        struct Commit: Decodable {
+            struct Inner: Decodable {
+                struct Rollup: Decodable { let contexts: Nodes<Context> }
+                let statusCheckRollup: Rollup?
+            }
+            let commit: Inner
+        }
+        struct AutoMerge: Decodable { let enabledBy: Login? }
+        struct Pull: Decodable {
+            let id: String, title: String, url: URL, body: String, isDraft: Bool, state: String, createdAt: Date
+            let viewerDidAuthor: Bool
+            let author: Login?
+            let additions: Int, deletions: Int, changedFiles: Int
+            let headRefName: String, baseRefName: String
+            let mergeable: String
+            let mergeStateStatus: String?
+            let reviewDecision: String?
+            let commitCount: Count
+            let closingIssuesReferences: Nodes<Closing>?
+            let autoMergeRequest: AutoMerge?
+            let latestReviews: Nodes<Review>
+            let reviewRequests: Nodes<Request>
+            let files: Nodes<File>?
+            let commits: Nodes<Commit>
+        }
+        struct Repository: Decodable {
+            let viewerPermission: String?
+            let squashMergeAllowed: Bool, mergeCommitAllowed: Bool, rebaseMergeAllowed: Bool, autoMergeAllowed: Bool
+            let pullRequest: Pull
+        }
+        struct Result: Decodable { let repository: Repository }
+        struct Teams: Decodable { struct Team: Decodable { let name: String }; let teams: [Team] }
+        // Team names in GraphQL need read:org. Older tokens without it get them from REST instead.
+        let withTeams = canReadOrgs
+        async let teams: Teams? = withTeams ? nil : try? get("/repos/\(ref.repo)/pulls/\(ref.number)/requested_reviewers")
+        let parts = ref.repo.split(separator: "/")
+        let result: Result = try await graphQL("""
+        query {
+          repository(owner: "\(parts[0])", name: "\(parts[1])") {
+            viewerPermission squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed autoMergeAllowed
+            pullRequest(number: \(ref.number)) {
+              id title url body isDraft state createdAt viewerDidAuthor author { login }
+              additions deletions changedFiles headRefName baseRefName mergeable mergeStateStatus reviewDecision
+              commitCount: commits { totalCount }
+              closingIssuesReferences(first: 3) { nodes { number repository { name } } }
+              autoMergeRequest { enabledBy { login } }
+              latestReviews(first: 30) { nodes { state author { login } } }
+              reviewRequests(first: 30) { nodes { asCodeOwner requestedReviewer {
+                ... on User { login } ... on Bot { login }\(withTeams ? " ... on Team { name }" : "") } } }
+              files(first: 100) { nodes { path additions deletions viewerViewedState } }
+              commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+                ... on CheckRun { name status conclusion startedAt completedAt databaseId detailsUrl
+                                  checkSuite { workflowRun { databaseId } } }
+                ... on StatusContext { context state createdAt targetUrl }
+              } } } } } }
+            }
+          }
+        }
+        """)
+        let repository = result.repository
+        let pull = repository.pullRequest
+        let contexts = pull.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes ?? []
+
+        // Reviewers: everyone asked (with code owners marked), then everyone who reviewed, latest state each.
+        // Team requests come back without a login; they take the REST team names in order.
+        var teamNames = (await teams)?.teams.map { "@" + $0.name }.makeIterator()
+        var reviewers: [PullSummary.Reviewer] = pull.reviewRequests.nodes.map { request in
+            if let login = request.requestedReviewer?.login {
+                return PullSummary.Reviewer(name: login, isTeam: false, state: .requested, isCodeOwner: request.asCodeOwner)
+            }
+            let team = request.requestedReviewer?.name.map { "@" + $0 } ?? teamNames?.next() ?? "A team"
+            return PullSummary.Reviewer(name: team, isTeam: true, state: .requested, isCodeOwner: request.asCodeOwner)
+        }
+        for review in pull.latestReviews.nodes {
+            guard let name = review.author?.login, !reviewers.contains(where: { $0.name == name }) else { continue }
+            let state: PullSummary.Reviewer.State = switch review.state {
+            case "APPROVED": .approved
+            case "CHANGES_REQUESTED": .changesRequested
+            case "DISMISSED": .dismissed
+            default: .commented
+            }
+            reviewers.append(PullSummary.Reviewer(name: name, isTeam: false, state: state, isCodeOwner: false))
+        }
+
+        let methods = [("squash", repository.squashMergeAllowed), ("merge", repository.mergeCommitAllowed),
+                       ("rebase", repository.rebaseMergeAllowed)].filter(\.1).map(\.0)
+        return PullSummary(
+            body: pull.body, author: pull.author?.login ?? "ghost",
+            additions: pull.additions, deletions: pull.deletions, changedFiles: pull.changedFiles,
+            headRef: pull.headRefName, baseRef: pull.baseRefName, mergeable: pull.mergeable,
+            mergeState: pull.mergeStateStatus, reviewDecision: pull.reviewDecision,
+            approvedBy: reviewers.filter { $0.state == .approved }.map(\.name),
+            changesRequestedBy: reviewers.filter { $0.state == .changesRequested }.map(\.name),
+            pendingReviewers: reviewers.count { $0.state == .requested },
+            checks: contexts.map { context in
+                PullSummary.Check(name: context.name ?? context.context ?? "check",
+                                  state: Readiness.checkState(status: context.status, conclusion: context.conclusion, state: context.state),
+                                  startedAt: context.startedAt ?? context.createdAt, completedAt: context.completedAt,
+                                  jobID: context.databaseId, runID: context.checkSuite?.workflowRun?.databaseId,
+                                  url: context.detailsUrl ?? context.targetUrl)
+            },
+            id: pull.id, title: pull.title, url: pull.url, isDraft: pull.isDraft, state: pull.state, createdAt: pull.createdAt,
+            viewerDidAuthor: pull.viewerDidAuthor, commitCount: pull.commitCount.totalCount,
+            closingIssues: pull.closingIssuesReferences?.nodes.map { "\($0.repository.name) #\($0.number)" } ?? [],
+            autoMergeBy: pull.autoMergeRequest.map { $0.enabledBy?.login ?? "someone" },
+            reviewers: reviewers,
+            files: pull.files?.nodes.map { .init(path: $0.path, additions: $0.additions, deletions: $0.deletions,
+                                                 viewed: $0.viewerViewedState == "VIEWED") } ?? [],
+            canWrite: ["ADMIN", "MAINTAIN", "WRITE"].contains(repository.viewerPermission ?? ""),
+            mergeMethods: methods.isEmpty ? ["merge"] : methods,
+            autoMergeAllowed: repository.autoMergeAllowed)
+    }
+
+    /// Changed files with their patches (REST): up to 300, GitHub's limit for patches in this list.
+    func pullFiles(_ ref: IssueRef) async throws -> [PullFile] {
+        var files: [PullFile] = []
+        for page in 1...3 {
+            let batch: [PullFile] = try await get("/repos/\(ref.repo)/pulls/\(ref.number)/files",
+                                                  query: ["per_page": "100", "page": "\(page)"])
+            files += batch
+            if batch.count < 100 { break }
+        }
+        return files
+    }
+
+    /// Brings a branch that's behind its base up to date (merges the base in).
+    func updateBranch(_ ref: IssueRef) async throws {
+        try await send("/repos/\(ref.repo)/pulls/\(ref.number)/update-branch", method: "PUT", body: [:])
+    }
+
+    /// Re-runs one job (and the jobs that depend on it).
+    func rerunJob(_ id: Int, repo: String) async throws {
+        try await send("/repos/\(repo)/actions/jobs/\(id)/rerun", method: "POST")
+    }
+
+    func setViewed(_ path: String, viewed: Bool, pullID: String) async throws {
+        struct Ignored: Decodable {}
+        let mutation = viewed ? "markFileAsViewed" : "unmarkFileAsViewed"
+        let escaped = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let _: [String: Ignored?] = try await graphQL("""
+        mutation { \(mutation)(input: { pullRequestId: "\(pullID)", path: "\(escaped)" }) { clientMutationId } }
+        """)
+    }
+
+    /// Turns auto-merge on (with a merge method) or off.
+    func setAutoMerge(_ enabled: Bool, pullID: String, method: String = "squash") async throws {
+        struct Ignored: Decodable {}
+        let mutation = enabled
+            ? "enablePullRequestAutoMerge(input: { pullRequestId: \"\(pullID)\", mergeMethod: \(method.uppercased()) })"
+            : "disablePullRequestAutoMerge(input: { pullRequestId: \"\(pullID)\" })"
+        let _: [String: Ignored?] = try await graphQL("mutation { \(mutation) { clientMutationId } }")
+    }
+
+    // MARK: Reviews, merging, comments (redesign §7)
+
+    enum ReviewEvent: String { case approve = "APPROVE", requestChanges = "REQUEST_CHANGES", comment = "COMMENT" }
+
+    func submitReview(_ ref: IssueRef, event: ReviewEvent, body: String?) async throws {
+        var fields: [String: Any] = ["event": event.rawValue]
+        if let body, !body.isEmpty { fields["body"] = body }
+        try await send("/repos/\(ref.repo)/pulls/\(ref.number)/reviews", method: "POST", body: fields)
+    }
+
+    /// Merges and, if asked, deletes the head branch afterwards.
+    func merge(_ ref: IssueRef, method: String = "squash", deleteBranch: Bool) async throws {
+        var branch: String?
+        if deleteBranch { branch = try await pull(ref).head.ref }
+        try await send("/repos/\(ref.repo)/pulls/\(ref.number)/merge", method: "PUT", body: ["merge_method": method])
+        if let branch {
+            try await send("/repos/\(ref.repo)/git/refs/heads/\(branch)", method: "DELETE")
+        }
+    }
+
+    func addComment(_ ref: IssueRef, body: String) async throws {
+        try await send("/repos/\(ref.repo)/issues/\(ref.number)/comments", method: "POST", body: ["body": body])
+    }
+
+    // MARK: Deployments
+
+    func pendingDeployments(_ run: WorkflowRun) async throws -> [PendingDeployment] {
+        try await get("/repos/\(run.repo)/actions/runs/\(run.id)/pending_deployments")
+    }
+
+    /// Approves or rejects every environment of the run the current user may review.
+    func reviewDeployments(_ run: WorkflowRun, environments: [Int], approve: Bool, comment: String) async throws {
+        try await send("/repos/\(run.repo)/actions/runs/\(run.id)/pending_deployments", method: "POST", body: [
+            "environment_ids": environments, "state": approve ? "approved" : "rejected", "comment": comment,
+        ])
+    }
+
+    // MARK: GraphQL
+
+    private struct GraphQLResponse<T: Decodable>: Decodable {
+        struct Message: Decodable { let message: String }
+        let data: T?
+        let errors: [Message]?
+    }
+
+    func graphQL<T: Decodable>(_ query: String, as type: T.Type = T.self) async throws -> T {
+        let data = try await send("/graphql", method: "POST", body: ["query": query])
+        let response: GraphQLResponse<T>
+        do { response = try decoder.decode(GraphQLResponse<T>.self, from: data) } catch {
+            throw GitHubError(message: "Failed to decode GraphQL response: \(error)")
+        }
+        guard let value = response.data else {
+            throw GitHubError(message: response.errors?.map(\.message).joined(separator: "; ") ?? "Empty GraphQL response")
+        }
+        return value
+    }
+
+    /// Readiness of every open pull request that involves you (checks, reviews, mergeability, size), and which
+    /// review requests name you directly rather than a team you're on; keyed "owner/repo#number".
+    func pullSignals() async throws -> (statuses: [String: PullStatus], direct: Set<String>) {
+        struct StateCount: Decodable { let state: String; let count: Int }
+        struct Node: Decodable {
+            struct Repository: Decodable { let nameWithOwner: String }
+            struct Nodes<T: Decodable>: Decodable { let nodes: [T] }
+            struct Review: Decodable { let state: String }
+            struct Commit: Decodable {
+                struct Inner: Decodable {
+                    struct Rollup: Decodable {
+                        struct Contexts: Decodable {
+                            let checkRunCountsByState: [StateCount]?
+                            let statusContextCountsByState: [StateCount]?
+                        }
+                        let state: String
+                        let contexts: Contexts?
+                    }
+                    let statusCheckRollup: Rollup?
+                }
+                let commit: Inner
+            }
+            let number: Int?
+            let repository: Repository?
+            let reviewDecision: String?
+            let mergeStateStatus: String?
+            let mergeable: String?
+            let additions: Int?
+            let deletions: Int?
+            let latestOpinionatedReviews: Nodes<Review>?
+            let commits: Nodes<Commit>?
+            var key: String? { number.flatMap { number in repository.map { "\($0.nameWithOwner)#\(number)" } } }
+        }
+        struct Search: Decodable { let nodes: [Node] }
+        struct Result: Decodable { let authored: Search; let requested: Search; let involved: Search; let direct: Search }
+        let result: Result = try await graphQL("""
+        query {
+          authored: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: 50) { nodes { ...Signals } }
+          requested: search(query: "is:pr is:open archived:false review-requested:@me", type: ISSUE, first: 50) { nodes { ...Signals } }
+          involved: search(query: "is:pr is:open archived:false involves:@me", type: ISSUE, first: 50) { nodes { ...Signals } }
+          direct: search(query: "is:pr is:open archived:false user-review-requested:@me", type: ISSUE, first: 50) {
+            nodes { ... on PullRequest { number repository { nameWithOwner } } }
+          }
+        }
+        fragment Signals on PullRequest {
+          number repository { nameWithOwner } reviewDecision mergeStateStatus mergeable additions deletions
+          latestOpinionatedReviews(first: 20) { nodes { state } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) {
+            checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
+        }
+        """)
+        var statuses: [String: PullStatus] = [:]
+        for node in result.authored.nodes + result.requested.nodes + result.involved.nodes {
+            guard let key = node.key, statuses[key] == nil else { continue }
+            let rollup = node.commits?.nodes.first?.commit.statusCheckRollup
+            let counts = CheckCounts(
+                checkRuns: Dictionary((rollup?.contexts?.checkRunCountsByState ?? []).map { ($0.state, $0.count) }, uniquingKeysWith: +),
+                statuses: Dictionary((rollup?.contexts?.statusContextCountsByState ?? []).map { ($0.state, $0.count) }, uniquingKeysWith: +))
+            statuses[key] = PullStatus(
+                reviewDecision: node.reviewDecision, mergeState: node.mergeStateStatus,
+                checks: counts.total > 0 ? counts.overall : .init(rollup: rollup?.state),
+                mergeable: node.mergeable, counts: counts,
+                approvals: node.latestOpinionatedReviews?.nodes.count { $0.state == "APPROVED" } ?? 0,
+                additions: node.additions ?? 0, deletions: node.deletions ?? 0)
+        }
+        return (statuses, Set(result.direct.nodes.compactMap(\.key)))
+    }
+}
+
+/// Follows redirects but drops the token when one leaves the API host: job logs redirect to signed blob
+/// storage URLs, which refuse a request that carries GitHub's Authorization header.
+private final class RedirectWithoutToken: NSObject, URLSessionTaskDelegate, Sendable {
+    static let shared = RedirectWithoutToken()
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        guard request.url?.host != task.originalRequest?.url?.host else { return request }
+        var stripped = request
+        stripped.setValue(nil, forHTTPHeaderField: "Authorization")
+        stripped.setValue(nil, forHTTPHeaderField: "If-None-Match")
+        return stripped
     }
 }
 
@@ -235,7 +689,9 @@ struct DeviceCode: Decodable {
 enum DeviceFlow {
     // Public client_id carried over from the original RepoRadar; swap in your own OAuth App's id if you like.
     static let clientID = "Ov23liBIfzKlrQskIuWA"
-    static let scopes = "repo notifications"
+    /// repo: private repositories, Actions, reviews and merging; notifications: the inbox;
+    /// read:org: team names of requested reviewers (read-only).
+    static let scopes = "repo notifications read:org"
 
     private struct PollResponse: Decodable {
         let accessToken: String?

@@ -5,8 +5,7 @@ import SwiftUI
 private struct SelectedURLsKey: FocusedValueKey { typealias Value = [URL] }
 private struct SelectedRunsKey: FocusedValueKey { typealias Value = [WorkflowRun] }
 private struct SelectedNotificationsKey: FocusedValueKey { typealias Value = [GitHubNotification] }
-private struct SidebarSelectionKey: FocusedValueKey { typealias Value = Binding<SidebarItem?> }
-private struct FocusTargetKey: FocusedValueKey { typealias Value = Binding<FocusTarget?> }
+private struct PageKey: FocusedValueKey { typealias Value = Binding<Page> }
 
 extension FocusedValues {
     var selectedURLs: [URL]? {
@@ -24,14 +23,9 @@ extension FocusedValues {
         set { self[SelectedNotificationsKey.self] = newValue }
     }
 
-    var focusTarget: Binding<FocusTarget?>? {
-        get { self[FocusTargetKey.self] }
-        set { self[FocusTargetKey.self] = newValue }
-    }
-
-    var sidebarSelection: Binding<SidebarItem?>? {
-        get { self[SidebarSelectionKey.self] }
-        set { self[SidebarSelectionKey.self] = newValue }
+    var page: Binding<Page>? {
+        get { self[PageKey.self] }
+        set { self[PageKey.self] = newValue }
     }
 }
 
@@ -40,19 +34,39 @@ struct AppCommands: Commands {
     @FocusedValue(\.selectedURLs) private var selectedURLs
     @FocusedValue(\.selectedRuns) private var selectedRuns
     @FocusedValue(\.selectedNotifications) private var selectedNotifications
-    @FocusedBinding(\.sidebarSelection) private var sidebarSelection
-    @FocusedBinding(\.focusTarget) private var focusTarget
-    @AppStorage("detailLayout") private var layout: DetailLayout = .bottom
+    @FocusedBinding(\.page) private var page
+    @FocusedBinding(\.inspector) private var inspector
+    @FocusedValue(\.listCommands) private var list
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         SidebarCommands()
 
-        // Find focuses the in-content search row; ⇧⌘F filters the sidebar, as in Rockxy.
+        // ⌘Z undoes the newest RepoRadar action while its undo window is open; otherwise it's the usual text undo.
+        CommandGroup(replacing: .undoRedo) {
+            Button(state.actions.canUndo ? "Undo Last Action" : "Undo") {
+                if state.actions.canUndo {
+                    state.actions.undoLast()
+                } else {
+                    NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+                }
+            }
+            .keyboardShortcut("z")
+            Button("Redo") { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
+
         CommandGroup(replacing: .textEditing) {
-            Button("Find…") { focusTarget = .search }
+            Button("Search or Jump To…") { SearchField.focusInKeyWindow() }
+                .keyboardShortcut("k")
+            Button("Find…") { SearchField.focusInKeyWindow() }
                 .keyboardShortcut("f")
-            Button("Filter Sidebar") { focusTarget = .sidebarFilter }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
+        }
+
+        CommandGroup(before: .windowList) {
+            Button("Open RepoRadar") { openWindow(id: "main") }
+                .keyboardShortcut("0")
+            Divider()
         }
 
         CommandGroup(after: .newItem) {
@@ -61,21 +75,35 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
-            ForEach([SidebarItem.inbox, .pulls, .actions], id: \.self) { item in
-                Toggle(item.title, isOn: Binding(get: { sidebarSelection == item }, set: { _ in sidebarSelection = item }))
+            ForEach(Page.allCases) { item in
+                Toggle(item.title, isOn: Binding(get: { page == item }, set: { _ in page = item }))
                     .keyboardShortcut(item.shortcut)
+                    .disabled(page == nil)
             }
+            Divider()
+            Button(inspector == true ? "Hide Running and Health" : "Show Running and Health") { inspector?.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(inspector == nil)
             Divider()
             Button("Refresh") { Task { await state.refresh() } }
                 .keyboardShortcut("r")
                 .disabled(state.isRefreshing || !state.hasToken)
             Divider()
-            Picker("Detail Pane", selection: $layout) {
-                Text("Below").tag(DetailLayout.bottom)
-                Text("On the Right").tag(DetailLayout.right)
-                Text("Hidden").tag(DetailLayout.hidden)
-            }
+        }
+
+        // Every list's keys. Single letters work only while a list has focus (never in a text field).
+        CommandMenu("List") {
+            Button("Next Item") { list?.move(1) }.keyboardShortcut("j", modifiers: []).disabled(list == nil)
+            Button("Previous Item") { list?.move(-1) }.keyboardShortcut("k", modifiers: []).disabled(list == nil)
+            Button("Expand or Collapse") { list?.toggle?() }.keyboardShortcut(.return, modifiers: []).disabled(list?.toggle == nil)
             Divider()
+            Button("Approve") { list?.primary?() }.keyboardShortcut("a", modifiers: []).disabled(list?.primary == nil)
+            Button("Re-run Failed Jobs") { list?.primary?() }.keyboardShortcut("r", modifiers: []).disabled(list?.primary == nil)
+            Button("Squash and Merge") { list?.merge?() }.keyboardShortcut("m", modifiers: [.command, .shift]).disabled(list?.merge == nil)
+            Divider()
+            Button("Done") { list?.done?() }.keyboardShortcut("e", modifiers: []).disabled(list?.done == nil)
+            Button("Snooze…") { list?.snooze?() }.keyboardShortcut("s", modifiers: []).disabled(list?.snooze == nil)
+            Button("Mute Thread") { list?.mute?() }.keyboardShortcut("m", modifiers: []).disabled(list?.mute == nil)
         }
 
         CommandMenu("Notification") {
@@ -87,15 +115,12 @@ struct AppCommands: Commands {
             RunActions(runs: selectedRuns ?? [])
                 .environment(state)
         }
-    }
-}
 
-private extension SidebarItem {
-    var shortcut: KeyEquivalent {
-        switch self {
-        case .inbox: "1"
-        case .pulls: "2"
-        default: "3"
+        #if DEBUG
+        CommandMenu("Debug") {
+            Button("Component Gallery") { openWindow(id: "gallery") }
+            Button("Show Menu Bar Panel") { MenuBarController.shared?.toggle() }
         }
+        #endif
     }
 }

@@ -166,9 +166,9 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
     return try decoder.decode([WorkflowJob].self, from: Data("[\(json)]".utf8))
 }
 
-/// A typical check.yml, drawn like GitHub: the four parallel jobs share one box, and the direct
-/// `changes → ci-required` edge is dropped because `changes` already reaches it through them.
-@Test func graphGroupsParallelJobsAndDropsRedundantEdges() throws {
+/// A typical check.yml: one box per job, YAML order within a column, and the direct `changes → ci-required`
+/// edge dropped because `changes` already reaches it through the four checks.
+@Test func graphKeepsYamlOrderAndDropsRedundantEdges() throws {
     let declared = WorkflowYAML.jobs(in: """
     jobs:
       changes:
@@ -185,8 +185,33 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
         needs: [changes, checks, database, images, browser]
     """)
     let graph = JobGraph(jobs: try decodeJobs(["changes", "images", "checks", "database", "browser", "ci-required"]), declared: declared)
-    #expect(graph.nodes.map { $0.jobs.map(\.name) } == [["changes"], ["images", "checks", "database", "browser"], ["ci-required"]])
-    #expect(graph.edges == [.init(from: 1, to: 2), .init(from: 2, to: 6)])
+    #expect(graph.nodes.map(\.title) == ["changes", "checks", "database", "images", "browser", "ci-required"])
+    #expect(graph.nodes.map(\.column) == [0, 1, 1, 1, 1, 2])
+    #expect(Set(graph.edges) == [.init(from: 1, to: 3), .init(from: 1, to: 4), .init(from: 1, to: 2), .init(from: 1, to: 5),
+                                 .init(from: 3, to: 6), .init(from: 4, to: 6), .init(from: 2, to: 6), .init(from: 5, to: 6)])
+}
+
+/// A matrix of more than 4 jobs is one node until expanded; 4 or fewer stay separate.
+@Test func graphCollapsesBigMatrices() throws {
+    let declared = WorkflowYAML.jobs(in: """
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+      test:
+        needs: build
+      lint:
+        needs: build
+    """)
+    let jobs = try decodeJobs(["build", "test (1)", "test (2)", "test (3)", "test (4)", "test (5)", "test (6)", "lint (a)", "lint (b)"])
+    let graph = JobGraph(jobs: jobs, declared: declared)
+    #expect(graph.nodes.map(\.title) == ["build", "test × 6", "lint (a)", "lint (b)"])
+    #expect(graph.nodes[1].isGroup && graph.nodes[1].matrix == "test")
+    #expect(Set(graph.edges) == [.init(from: 1, to: 2), .init(from: 1, to: 8), .init(from: 1, to: 9)])
+    let expanded = JobGraph(jobs: jobs, declared: declared, expanded: ["test"])
+    #expect(expanded.nodes.count == 9)
+    #expect(JobGraph.columnTitle(["test (1)", "test (2)"], level: 1) == "Test")
+    #expect(JobGraph.columnTitle(["build", "lint"], level: 1) == "Level 1")
+    #expect(JobGraph.columnTitle(["resolve"], level: 0) == "Level 0")
 }
 
 /// `deploy` needs `lint` two columns back; that line must route around `build`, not through it.
@@ -203,7 +228,7 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
         needs: [build, lint]
     """)
     let graph = JobGraph(jobs: try decodeJobs(["setup", "lint", "build", "deploy"]), declared: declared)
-    let view = JobGraphView(graph: graph, title: "t.yml", trigger: "push", selection: .constant(nil))
+    let view = JobGraphView(graph: graph, selection: .constant(nil))
     #expect(graph.edges.count == 3)
 
     for edge in graph.edges {
@@ -231,21 +256,68 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
     }
 }
 
-@Test func graphFitScalesAndCenters() {
-    // A wide graph in a small pane shrinks to the limiting width, centered vertically.
-    let wide = JobGraphView.fitted(content: CGSize(width: 1000, height: 200), in: CGSize(width: 532, height: 400))
-    #expect(abs(wide.scale - 0.5) < 0.001)
-    #expect(abs(wide.offset.width - 16) < 0.001 && abs(wide.offset.height - 150) < 0.001)
-    // A small graph grows, but never past 150%, and stays centered.
-    let small = JobGraphView.fitted(content: CGSize(width: 100, height: 50), in: CGSize(width: 800, height: 600))
-    #expect(small.scale == 1.5)
-    #expect(small.offset == CGSize(width: 325, height: 262.5))
+@Test func graphFitStaysWithinZoomRange() {
+    // A wide graph in a small pane shrinks to the limiting width, but never below 50%.
+    #expect(JobGraphView.fitScale(content: CGSize(width: 1000, height: 200), in: CGSize(width: 600, height: 196)) == 0.6)
+    #expect(JobGraphView.fitScale(content: CGSize(width: 4000, height: 200), in: CGSize(width: 600, height: 196)) == 0.5)
+    // A small graph grows, but never past 200%.
+    #expect(JobGraphView.fitScale(content: CGSize(width: 100, height: 50), in: CGSize(width: 800, height: 600)) == 2)
 }
 
-@Test func zoomKeepsPointUnderCursor() {
-    let anchor = CGPoint(x: 300, y: 120)
-    let offset = CGSize(width: 40, height: 20)
-    let zoomed = JobGraphView.zoomedOffset(offset: offset, scale: 1, newScale: 2, anchor: anchor)
-    // The graph point under the cursor before (260, 100) must still be under it after zooming.
-    #expect(zoomed.width + 260 * 2 == anchor.x && zoomed.height + 100 * 2 == anchor.y)
+@Test func badgeCapsAt99() {
+    #expect(Badge.text(0) == "0" && Badge.text(99) == "99" && Badge.text(100) == "99+")
+}
+
+@Test func syncStatusPrecedence() {
+    let now = Date()
+    let spent = RateLimit(remaining: 0, limit: 5000, reset: now.addingTimeInterval(600))
+    #expect(SyncStatus(hasToken: false, isRefreshing: true, failure: nil, rateLimit: nil, now: now) == .signInAgain)
+    #expect(SyncStatus(hasToken: true, isRefreshing: false, failure: .unauthorized, rateLimit: nil, now: now) == .signInAgain)
+    #expect(SyncStatus(hasToken: true, isRefreshing: true, failure: .offline, rateLimit: spent, now: now) == .offline)
+    #expect(SyncStatus(hasToken: true, isRefreshing: true, failure: nil, rateLimit: spent, now: now) == .rateLimited(until: spent.reset))
+    // A spent quota whose reset time has passed no longer counts.
+    #expect(SyncStatus(hasToken: true, isRefreshing: true, failure: nil, rateLimit: spent, now: now.addingTimeInterval(700)) == .syncing)
+    #expect(SyncStatus(hasToken: true, isRefreshing: false, failure: .other, rateLimit: nil, now: now) == .live)
+
+    #expect(SyncFailure(URLError(.notConnectedToInternet)) == .offline)
+    #expect(SyncFailure(GitHubError(message: "Bad credentials", status: 401)) == .unauthorized)
+    #expect(SyncFailure(GitHubError(message: "API rate limit exceeded for user", status: 403)) == .rateLimited)
+    #expect(SyncFailure(GitHubError(message: "Resource not accessible by integration", status: 403)) == .other)
+}
+
+@Test func runCellsSummary() throws {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    decoder.dateDecodingStrategy = .iso8601
+    let runs = try decoder.decode(WorkflowRunsPage.self, from: Data("""
+    {"workflow_runs": [
+      \(run(1, workflow: 10, created: "2026-01-01T00:00:00Z", status: "completed", conclusion: "success")),
+      \(run(2, workflow: 10, created: "2026-01-02T00:00:00Z", status: "completed", conclusion: "failure")),
+      \(run(3, workflow: 10, created: "2026-01-03T00:00:00Z", status: "completed", conclusion: "success"))
+    ]}
+    """.utf8)).workflowRuns
+    #expect(RunCells.summary(runs) == "Last 3 runs: 2 succeeded, 1 failed")
+    #expect(RunCells.summary([]) == "No runs")
+}
+
+@Test func exclusionsMatchReposAndOwners() {
+    let excluded = { AppState.isExcluded($0, repos: ["o/one"], owners: ["org"]) }
+    #expect(excluded("o/one"))
+    #expect(!excluded("o/two"))
+    #expect(excluded("org/anything"))
+    #expect(!excluded("orgx/repo"))  // owner match is exact, not a prefix
+}
+
+@Test func githubCLIActiveAccount() {
+    // The shape `gh auth status --hostname github.com --json hosts` prints.
+    let json = """
+    {"hosts":{"github.com":[
+      {"state":"success","active":false,"host":"github.com","login":"work","tokenSource":"keyring"},
+      {"state":"success","active":true,"host":"github.com","login":"passion729","tokenSource":"keyring","scopes":"repo"}]}}
+    """
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: json) == "passion729")
+    let failed = #"{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"x","error":"bad token"}]}}"#
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: failed) == nil)
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: #"{"hosts":{}}"#) == nil)
+    #expect(GitHubCLI.activeAccount(fromStatusJSON: "not json") == nil)
 }

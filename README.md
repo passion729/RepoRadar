@@ -1,35 +1,44 @@
 # RepoRadar
 
-A native macOS app that brings your GitHub notifications, pull requests and GitHub Actions runs together in one window, across every repository you work on.
+A native macOS app that answers one question across every repository you work on: **what needs you right now?** Review requests, failing workflows, deployments waiting for approval and mentions land in one ranked queue. The GitHub notifications inbox, pull requests and Actions runs each have their own page.
 
 Built with SwiftUI and Liquid Glass for macOS 26, packaged with Swift Package Manager. No Xcode project needed.
 
 ## Features
 
-**Inbox**
-- All your GitHub notifications, filtered by Unread, All, Review Requests or CI Activity
-- Mark threads as read or done per row, from the toolbar, the context menu, or with Mail's shortcuts (⇧⌘U, ⌃⌘A)
-- Opening a thread marks it read. The inbox is polled every minute using ETags, so unchanged checks don't count against your rate limit
-- Selecting a CI notification finds the workflow run it refers to and shows its full details
+**Now** (⌘1)
+- Four numbers up top: reviews waiting, failing workflows, running now, unread
+- **Needs you**: one queue ranked by urgency, then age. Duplicates are merged, so a PR that asks for your review and also has a notification shows once
+- Act on the selected item in place: approve, request changes, comment, merge, re-run failed jobs, approve a deployment, reply to a mention
+- Every action is optimistic and can be undone for 4 seconds (⌘Z or the toast). Done (E) and Snooze (S) hide an item until something new happens on it
+- An inspector (⌥⌘I) with running workflows, their expected time left, and each repository's default-branch health
 
-**Pull Requests**
-- Open pull requests across all repositories, filtered by Review Requested, Authored, Assigned or Mentioned
-- Details: branches, diff size, reviewers, labels, the rendered markdown description, comments, and the Actions checks for the head commit
+**Inbox** (⌘2)
+- GitHub notifications filtered by Unread, Participating, Mentions, CI, or All, grouped by time or repository; bot notifications are bundled
+- A thread view with the full conversation, linked pull request, and a reply box that keeps your draft
+- Mark read (⇧⌘U), done (⌃⌘A), snooze, or mute a thread. Opening a thread marks it read after a short delay
 
-**Actions**
-- The latest run of every workflow in every repository you own, collaborate on or belong to through an organization, filtered by Failing, Running or Passing
-- A per-repository run history in the sidebar
-- A workflow graph like GitHub's: jobs laid out by `needs:`, parallel jobs grouped, redundant edges hidden. Pan by dragging or with a two-finger swipe, zoom with the mouse wheel or a pinch, and Fit to see everything
-- Jobs and steps for every run, with the failing job selected automatically
-- Re-run failed jobs, re-run all jobs, or cancel a run (with confirmation)
+**Pull Requests** (⌘3)
+- Lists for Waiting on you, Yours and Mentioned, each with readiness dots (checks, reviews, mergeable)
+- A readiness bar that says what blocks the merge, with the merge method, auto-merge and Update branch
+- Overview with a checks timeline and reviewers (including teams), Files with a diff and a viewed toggle, Checks, Conversation
+- A review bar for comment, approve or request changes (⌘↵ submits)
+
+**Actions** (⌘4)
+- Every workflow's latest run with a pass/fail strip of its history, filtered by Failing, Running or Waiting. Disabled workflows are hidden
+- A job graph laid out by `needs:`, with large matrices collapsed, failure paths in red, zoom (⌘- / ⌘=) and Fit
+- Job logs with sections, ANSI color, the failing lines pulled to the top, a minimap, and a separate log window
+- Re-run failed (⇧⌘R), re-run all (⌥⌘R), re-run one job, or cancel (⌘., with confirmation)
 
 **Everywhere**
-- A dense, sortable table layout with a resizable detail pane below or beside it
-- Search by field (⌘F) and a sidebar filter (⇧⌘F)
-- Menu bar extra with unread notifications, review requests and failing workflows
-- System notifications for new GitHub notifications and newly failing workflows. The Dock badge shows unread plus failing
-- A status bar showing your remaining API quota
-- Custom font, monospaced font and text size (Settings → Appearance)
+- Search or jump to anything with ⌘K: `repo:`, `author:`, `reason:` (e.g. `reason:review_requested`), `#123` and free words
+- Filter repositories from the toolbar: scope every page to one repository, pin up to 8 to the sidebar, or leave repositories and whole owners out of every list
+- Menu bar icon with a colored dot when something needs you, and a panel with the counts, the top of the queue, and running workflows (with "notify me when these finish")
+- System alerts only for what matters (a push of yours failed, a review request, a mention, a deployment waiting), with Re-run, Approve and Open buttons. Pause them for an hour from the toolbar bell
+- Dock badge with the Needs-you count
+- Polls with ETags and honors `X-Poll-Interval` and rate limits; the sidebar shows sync state and API quota
+- Controls the token can't use are greyed out and say which scope is missing
+- Light and dark appearance, VoiceOver labels and actions, Reduce Motion, custom fonts and text size (Settings → Appearance)
 
 ## Requirements
 
@@ -46,16 +55,17 @@ open RepoRadar.app
 ./test.sh             # runs the test suite
 ```
 
-`build.sh` signs the app ad hoc so the Keychain and notifications work without a developer account.
+`build.sh` signs with the Yuanju Bo team's Apple Development certificate (team `3JNF4FX993`) when it is in your Keychain, so the signature stays stable across rebuilds. Without it (for example in CI) the app is signed ad hoc, which still lets the Keychain and notifications work. Set `SIGN_IDENTITY` to use another certificate, or `SIGN_IDENTITY=-` for ad hoc.
 
 ## Signing in
 
-Open **Settings (⌘,) → Account** and either:
+Open **Settings (⌘,) → Account** and pick one:
 
-- **Sign in with GitHub**: uses the OAuth device flow. The code is copied for you and github.com opens to approve it. No password or client secret is involved.
-- **Paste a personal access token** with the `repo` and `notifications` scopes.
+- **Use GitHub CLI account**: shown when `gh` is installed and logged in. RepoRadar asks `gh auth token` for the token each time and stores nothing itself.
+- **Sign in with GitHub**: the OAuth device flow. The code is copied for you and github.com opens to approve it. No password or client secret is involved.
+- **Paste a personal access token** with the `repo`, `notifications` and `read:org` scopes. `read:org` is read-only and lets pull requests show team reviewers.
 
-The token is stored in the macOS Keychain. Debug builds also read `REPORADAR_TOKEN` or `~/.reporadar-dev-token`, so rebuilding doesn't trigger Keychain prompts.
+Device-flow and pasted tokens are stored in the macOS Keychain. Debug builds also read `REPORADAR_TOKEN` or `~/.reporadar-dev-token`, so rebuilding doesn't trigger Keychain prompts.
 
 To use your own OAuth App, enable **Device Flow** in its settings and replace `DeviceFlow.clientID` in `Sources/RepoRadar/GitHub.swift`.
 
@@ -63,38 +73,55 @@ To use your own OAuth App, enable **Device Flow** in its settings and replace `D
 
 | Shortcut | Action |
 |---|---|
-| ⌘1 / ⌘2 / ⌘3 | Inbox / Pull Requests / Actions |
+| ⌘1 – ⌘4 | Now / Inbox / Pull Requests / Actions |
+| ⌘K or ⌘F | Search or jump to |
+| ⌥⌘I | Show or hide Running and Health |
 | ⌘R | Refresh |
-| ⌘F / ⇧⌘F | Search / filter the sidebar |
+| ⌘Z | Undo the last action |
+| ⌘0 | Open RepoRadar (also from the menu bar panel) |
+| J / K | Next / previous item in a list |
+| ↵ | Expand or collapse the item |
+| A / R | Approve / re-run failed jobs |
+| ⇧⌘M | Squash and merge |
+| E / S / M | Done / snooze / mute thread |
+| ⇧⌘U / ⌃⌘A | Mark notification read / done |
+| ⇧⌘R / ⌥⌘R / ⌘. | Re-run failed / re-run all / cancel run |
 | ⌘O / ⇧⌘C | Open in browser / copy link |
-| ⇧⌘U / ⌃⌘A | Mark as read / mark as done |
-| ⇧⌘R / ⌥⌘R | Re-run failed jobs / re-run all jobs |
-| ⌘. | Cancel run |
+| ⌘↵ | Send a reply, comment or review |
+
+Single-letter keys work only while a list has focus, never while typing.
 
 ## Project layout
 
 ```
 Sources/RepoRadar/
-├── RepoRadarApp.swift   # scenes: main window, menu bar extra, settings; notification clicks
-├── AppState.swift       # observable state, refresh and polling, actions, alerts
-├── GitHub.swift         # Keychain, REST client (actor, ETag cache), OAuth device flow
-├── Models.swift         # workflow runs, jobs, pull requests, issues, notifications
-├── WorkflowGraph.swift  # workflow YAML `needs:` reader and graph layout model
-├── Markdown.swift       # block-level GitHub-flavored markdown renderer
-├── MainView.swift       # window frame, toolbar status pill, sidebar
-├── Chrome.swift         # shared workspace chrome: tabs, search, split panes, status bar
-├── InboxView.swift, PullsView.swift, ActionsView.swift
-├── Detail.swift         # run, pull request and issue details
-├── JobGraphView.swift   # workflow graph with pan, zoom and fit
-├── Commands.swift       # menu commands and focused values
-├── MenuBarContent.swift, SettingsView.swift, FontTheme.swift
-Tests/RepoRadarTests/    # model, graph, markdown and layout tests
+├── RepoRadarApp.swift      # scenes, notification categories and clicks
+├── Config.swift            # tunable defaults: undo window, refresh cadence, Dock badge, bot logins
+├── Theme.swift             # color, type and spacing tokens
+├── Components/             # buttons, labels, segmented control, toast, split panes, run cells
+├── AppState.swift          # observable state, sync loops, actions, alerts
+├── NeedsYou.swift          # the Needs-you engine: ranking, dedupe, done and snooze
+├── ActionQueue.swift       # optimistic actions with undo
+├── GitHub.swift            # REST and GraphQL client (ETags, rate limits), Keychain, device flow
+├── GitHubCLI.swift         # sign-in through the GitHub CLI
+├── Models.swift, Insights.swift, InboxModel.swift, Workflows.swift, JobLog.swift, Jump.swift
+├── MainView.swift          # window, sidebar, toolbar
+├── ToolbarControls.swift   # repository filter, alert settings, account
+├── NowView.swift, QueueView.swift
+├── InboxView.swift, ThreadView.swift, Detail.swift, AutoRead.swift
+├── PullsView.swift, PullDetailView.swift
+├── ActionsView.swift, RunDetailView.swift, WorkflowGraph.swift, JobGraphView.swift
+├── MenuBarContent.swift, Alerts.swift, Commands.swift
+├── SettingsView.swift, FontTheme.swift, Markdown.swift
+Tests/RepoRadarTests/       # engine, page models, alerts and accessibility tests
 ```
 
 ## Troubleshooting
 
 `clt-env.sh` works around a known broken Command Line Tools install: stale 2024 `PackageDescription` interfaces, and a macOS 27 SDK whose SwiftUI macro plugin only ships with Xcode. It only applies when the package manifest fails to load, so it's a no-op on a healthy toolchain. For the same reason the code avoids the `@Entry` and `#Preview` macros.
 
+Job logs older than the repository's retention (90 days by default) are gone from GitHub; RepoRadar says so instead of showing them.
+
 ## Acknowledgements
 
-The workbench layout (filter tabs, search row, table/detail split, status bar) was inspired by [Rockxy](https://github.com/RockxyApp/Rockxy). Only the design was used as a reference, not its code.
+[RepoBar](https://github.com/steipete/RepoBar) was a reference for GitHub API usage, and [t3code](https://github.com/pingdotgg/t3code) for signing in through the GitHub CLI. Only the approaches were used, not their code.

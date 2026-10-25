@@ -94,16 +94,26 @@ enum WorkflowYAML {
     }
 }
 
-/// Jobs laid out left-to-right by dependency depth, like GitHub's workflow graph:
-/// redundant edges are dropped, and jobs sharing both their upstream and downstream jobs share one box.
+/// Jobs laid out left-to-right by dependency depth (spec §5): a column per `needs` level, YAML order within a
+/// column, redundant edges dropped. A matrix of more than 4 jobs shows as one node ("test × 6") until expanded.
 struct JobGraph {
-    /// One box: a single job, or a group of jobs that sit in parallel between the same neighbours.
+    /// One box: a job, or a collapsed matrix.
     struct Node: Identifiable {
         let jobs: [WorkflowJob]
         let column: Int
         let row: Int
+        /// The declared job a collapsed matrix comes from (to expand it).
+        let matrix: String?
         var id: WorkflowJob.ID { jobs[0].id }
         var isGroup: Bool { jobs.count > 1 }
+
+        var title: String {
+            guard isGroup, let matrix else { return jobs[0].name }
+            return "\(matrix) × \(jobs.count)"
+        }
+
+        /// The worst state among the node's jobs.
+        var state: RunState { jobs.map(\.state).min() ?? .skipped }
     }
 
     struct Edge: Hashable {
@@ -111,17 +121,20 @@ struct JobGraph {
         let to: Node.ID
     }
 
+    static let matrixLimit = 4
+
     let nodes: [Node]
     let edges: [Edge]
     var columns: Int { (nodes.map(\.column).max() ?? -1) + 1 }
 
-    init(jobs: [WorkflowJob], declared: [DeclaredJob]) {
+    init(jobs: [WorkflowJob], declared: [DeclaredJob], expanded: Set<String> = []) {
         // Which declared job produced each run job ("ci / check" comes from reusable job `ci`,
         // "build (ubuntu)" from a matrix of `build`).
         let owner: [WorkflowJob.ID: String] = Dictionary(uniqueKeysWithValues: jobs.compactMap { job in
             declared.first { Self.matches(job.name, $0) }.map { (job.id, $0.id) }
         })
         let needs = Dictionary(declared.map { ($0.id, $0.needs) }, uniquingKeysWith: { first, _ in first })
+        let yamlOrder = Dictionary(declared.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         var depthCache: [String: Int] = [:]
         func depth(of id: String, visiting: Set<String> = []) -> Int {
@@ -158,33 +171,29 @@ struct JobGraph {
         for (from, targets) in downstream {
             reduced[from] = targets.filter { !reachable(from: from, skippingDirect: $0) }
         }
-        var upstream: [WorkflowJob.ID: Set<WorkflowJob.ID>] = [:]
-        for (from, targets) in reduced { for to in targets { upstream[to, default: []].insert(from) } }
 
-        // Group jobs in the same column with identical neighbours, keeping the run's job order.
-        struct GroupKey: Hashable {
-            let column: Int
-            let upstream: Set<WorkflowJob.ID>
-            let downstream: Set<WorkflowJob.ID>
+        // Boxes: big matrices collapse; everything else is one box per job. YAML order within a column,
+        // then the run's order for jobs the file doesn't explain.
+        let matrixSizes = Dictionary(grouping: jobs.compactMap { owner[$0.id] }, by: { $0 }).mapValues(\.count)
+        var groups: [String: [WorkflowJob]] = [:]
+        var order: [(key: String, column: Int, rank: Int, matrix: String?)] = []
+        for (index, job) in jobs.enumerated() {
+            let declaredID = owner[job.id]
+            let collapse = declaredID.map { (matrixSizes[$0] ?? 0) > Self.matrixLimit && !expanded.contains($0) } ?? false
+            let key = collapse ? "matrix:\(declaredID!)" : "job:\(job.id)"
+            if groups[key] == nil {
+                order.append((key, column[job.id]!, (declaredID.flatMap { yamlOrder[$0] } ?? declared.count) * 10_000 + index,
+                              collapse ? declaredID : nil))
+            }
+            groups[key, default: []].append(job)
         }
-        var groups: [GroupKey: [WorkflowJob]] = [:]
-        var order: [GroupKey] = []
-        for job in jobs {
-            let key = GroupKey(column: column[job.id]!, upstream: upstream[job.id] ?? [], downstream: reduced[job.id] ?? [])
-            // Jobs with no neighbours at all stay separate; grouping unrelated standalone jobs would be misleading.
-            let groupable = !key.upstream.isEmpty || !key.downstream.isEmpty
-            let finalKey = groupable ? key : GroupKey(column: key.column, upstream: [job.id], downstream: [])
-            if groups[finalKey] == nil { order.append(finalKey) }
-            groups[finalKey, default: []].append(job)
-        }
-
         var rowsUsed: [Int: Int] = [:]
         var nodeOf: [WorkflowJob.ID: Node.ID] = [:]
-        nodes = order.map { key in
-            let members = groups[key]!
-            defer { rowsUsed[key.column, default: 0] += 1 }
+        nodes = order.sorted { ($0.column, $0.rank) < ($1.column, $1.rank) }.map { entry in
+            let members = groups[entry.key]!
+            defer { rowsUsed[entry.column, default: 0] += 1 }
             for job in members { nodeOf[job.id] = members[0].id }
-            return Node(jobs: members, column: key.column, row: rowsUsed[key.column, default: 0])
+            return Node(jobs: members, column: entry.column, row: rowsUsed[entry.column, default: 0], matrix: entry.matrix)
         }
 
         var edges: [Edge] = []
@@ -192,7 +201,7 @@ struct JobGraph {
         for job in jobs {
             for target in (reduced[job.id] ?? []).sorted() {
                 let edge = Edge(from: nodeOf[job.id]!, to: nodeOf[target]!)
-                if seen.insert(edge).inserted { edges.append(edge) }
+                if edge.from != edge.to, seen.insert(edge).inserted { edges.append(edge) }
             }
         }
         self.edges = edges

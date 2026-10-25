@@ -14,7 +14,7 @@ enum MarkdownBlock: Equatable {
     // ponytail: line-based block parser covering what PR/issue bodies use; no nested quotes, setext
     // headings or lazy continuation lines. Switch to swift-cmark if those start showing up.
     static func parse(_ source: String) -> [MarkdownBlock] {
-        let cleaned = source.replacingOccurrences(of: "<!--[\\s\\S]*?-->", with: "", options: .regularExpression)
+        let cleaned = cleanHTML(source)
         let lines = cleaned.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         var blocks: [MarkdownBlock] = []
         var paragraph: [String] = []
@@ -87,6 +87,21 @@ enum MarkdownBlock: Equatable {
         }
         flushParagraph()
         return blocks
+    }
+
+    /// Comments and the simple HTML bots and templates write: links become markdown links, `<br>` a line
+    /// break, images and wrapper tags go.
+    static func cleanHTML(_ source: String) -> String {
+        let rules: [(String, String)] = [
+            ("<!--[\\s\\S]*?-->", ""),
+            (#"<a\s+[^>]*href="([^"]*)"[^>]*>([\s\S]*?)</a>"#, "[$2]($1)"),
+            (#"<br\s*/?>"#, "\n"),
+            (#"<img[^>]*>"#, ""),
+            (#"</?(p|div|span|b|i|em|strong|sub|sup|details|summary|picture|source)\b[^>]*>"#, ""),
+        ]
+        return rules.reduce(source) { text, rule in
+            text.replacingOccurrences(of: rule.0, with: rule.1, options: [.regularExpression, .caseInsensitive])
+        }
     }
 
     static func inline(_ text: String) -> AttributedString {

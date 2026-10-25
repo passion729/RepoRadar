@@ -17,15 +17,12 @@ struct AccountSettings: View {
     @State private var deviceCode: DeviceCode?
     @State private var loginTask: Task<Void, Never>?
     @State private var loginError: String?
+    /// The GitHub CLI's signed-in account, when there is one.
+    @State private var cliAccount: String?
 
     var body: some View {
         Form {
-            if state.hasToken {
-                Section {
-                    LabeledContent("Signed in as", value: state.login.map { "@\($0)" } ?? "…")
-                    Button("Sign Out") { state.signOut() }
-                }
-            } else if let deviceCode {
+            if let deviceCode {
                 Section("Authorize in your browser") {
                     LabeledContent("Device code") {
                         Text(deviceCode.userCode)
@@ -40,10 +37,48 @@ struct AccountSettings: View {
                     Button("Cancel") { loginTask?.cancel() }
                         .keyboardShortcut(.cancelAction)
                 }
-            } else {
+            } else if state.hasToken {
                 Section {
-                    Button("Sign in with GitHub…") { startDeviceFlow() }
-                        .buttonStyle(.glassProminent)
+                    LabeledContent("Signed in as", value: state.login.map { "@\($0)" } ?? "…")
+                    if state.usesGitHubCLI {
+                        LabeledContent("Account from", value: "GitHub CLI (gh)")
+                    }
+                    if let scopes = state.tokenScopes {
+                        LabeledContent("Permissions", value: scopes.isEmpty ? "—" : scopes.sorted().joined(separator: ", "))
+                    }
+                    Button("Sign Out") { state.signOut() }
+                } footer: {
+                    if state.usesGitHubCLI {
+                        Text("RepoRadar asks gh for its token as needed. Signing out here leaves gh signed in.")
+                    }
+                }
+                if !state.usesGitHubCLI, let cliAccount {
+                    Section {
+                        Button("Use GitHub CLI Account (@\(cliAccount)) Instead") { useCLI() }
+                    }
+                }
+                if !state.usesGitHubCLI, let scopes = state.tokenScopes, !scopes.contains("read:org"), !scopes.contains("admin:org") {
+                    Section {
+                        Button("Re-authorize with GitHub…") { startDeviceFlow() }
+                    } footer: {
+                        Text("This token can't read organization teams, so team reviewers are looked up one request at a time. Re-authorizing adds read:org (read-only). A personal access token needs read:org added on GitHub.")
+                    }
+                }
+            } else {
+                if let cliAccount {
+                    Section {
+                        Button("Use GitHub CLI Account (@\(cliAccount))") { useCLI() }
+                            .buttonStyle(.glassProminent)
+                    } footer: {
+                        Text("You're signed in to the GitHub CLI (gh). RepoRadar uses that login and follows it if it changes.")
+                    }
+                }
+                Section {
+                    if cliAccount == nil {
+                        Button("Sign in with GitHub…") { startDeviceFlow() }.buttonStyle(.glassProminent)
+                    } else {
+                        Button("Sign in with GitHub…") { startDeviceFlow() }
+                    }
                 } footer: {
                     Text("Opens github.com to approve access. No password is stored.")
                 }
@@ -58,7 +93,7 @@ struct AccountSettings: View {
                 } header: {
                     Text("Personal access token")
                 } footer: {
-                    Text("Needs the repo and notifications scopes.")
+                    Text("Needs the repo, notifications and read:org scopes.")
                 }
             }
             if let loginError {
@@ -66,6 +101,16 @@ struct AccountSettings: View {
             }
         }
         .formStyle(.grouped)
+        .task(id: state.hasToken) { cliAccount = await GitHubCLI.account() }
+    }
+
+    private func useCLI() {
+        loginError = nil
+        Task {
+            if !(await state.signInWithGitHubCLI()) {
+                loginError = "The GitHub CLI didn't hand over a token. Run `gh auth login` in Terminal and try again."
+            }
+        }
     }
 
     private func startDeviceFlow() {
@@ -91,11 +136,9 @@ struct GeneralSettings: View {
     @Environment(AppState.self) private var state
     @AppStorage("refreshMinutes") private var refreshMinutes = 5
     @AppStorage("lookbackDays") private var lookbackDays = 30
-    @AppStorage("notifyFailures") private var notifyFailures = true
-    @AppStorage("notifyFinishedRuns") private var notifyFinishedRuns = true
-    @AppStorage("notifyStartedRuns") private var notifyStartedRuns = true
-    @AppStorage("notifyInbox") private var notifyInbox = true
-    @AppStorage("notifyOwnActivity") private var notifyOwnActivity = false
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
+    @AppStorage("autoReadSeconds") private var autoReadSeconds = 3
+    @AppStorage("doneAfterReply") private var doneAfterReply = true
 
     var body: some View {
         Form {
@@ -110,13 +153,42 @@ struct GeneralSettings: View {
                 Text("Includes repositories you own, collaborate on, or can access through an organization. Archived repositories are skipped.")
             }
             Section {
-                Toggle("Notify about new GitHub notifications", isOn: $notifyInbox)
-                Toggle("Include activity on my own pull requests and issues", isOn: $notifyOwnActivity)
-                    .disabled(!notifyInbox)
-                    .padding(.leading, 20)
-                Toggle("Notify when a workflow run starts", isOn: $notifyStartedRuns)
-                Toggle("Notify when a workflow run finishes", isOn: $notifyFinishedRuns)
-                Toggle("Notify when a workflow starts failing", isOn: $notifyFailures)
+                ForEach(state.excludedOwners, id: \.self) { owner in
+                    LabeledContent("\(owner) (all repositories)") {
+                        Button("Watch Again") { state.setExcluded(owner: owner, false) }
+                    }
+                }
+                ForEach(state.excludedRepos, id: \.self) { repo in
+                    LabeledContent(repo) {
+                        Button("Watch Again") { state.setExcluded(repo, false) }
+                    }
+                }
+                if state.excludedRepos.isEmpty && state.excludedOwners.isEmpty {
+                    Text("None").foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Excluded repositories")
+            } footer: {
+                Text("Exclude repositories or whole organizations from the Filter Repositories button in the toolbar.")
+            }
+            Section {
+                ForEach(Alerts.Kind.allCases, id: \.self) { AlertToggle(kind: $0) }
+            } header: {
+                Text("Alert me when")
+            } footer: {
+                Text("Everything else only updates the counts. The Dock badge counts what needs you.")
+            }
+            Section {
+                Toggle("Show RepoRadar in the menu bar", isOn: $showMenuBarIcon)
+            }
+            Section {
+                Picker("Mark as read after viewing", selection: $autoReadSeconds) {
+                    Text("Never").tag(0)
+                    ForEach([1, 2, 3, 5, 10, 30], id: \.self) { Text("\($0) sec").tag($0) }
+                }
+                Toggle("Mark a thread done after replying to it", isOn: $doneAfterReply)
+            } footer: {
+                Text("Read notifications, and failing workflows or review requests you've viewed, stop counting toward the badges until something new happens.")
             }
         }
         .formStyle(.grouped)
