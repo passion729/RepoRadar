@@ -55,7 +55,7 @@ open RepoRadar.app
 ./test.sh             # runs the test suite
 ```
 
-`build.sh` signs the app ad hoc so the Keychain and notifications work without a developer account.
+`build.sh` signs with the Yuanju Bo team's Apple Development certificate (team `3JNF4FX993`) when it is in your Keychain, so the signature stays stable across rebuilds. Without it (for example in CI) the app is signed ad hoc, which still lets the Keychain and notifications work. Set `SIGN_IDENTITY` to use another certificate, or `SIGN_IDENTITY=-` for ad hoc.
 
 ## Signing in
 
