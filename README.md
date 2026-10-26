@@ -40,7 +40,7 @@ Built with SwiftUI and Liquid Glass for macOS 26, packaged with Swift Package Ma
 - Polls with ETags and honors `X-Poll-Interval` and rate limits; the sidebar shows sync state and API quota
 - Controls the token can't use are greyed out and say which scope is missing
 - Light and dark appearance, VoiceOver labels and actions, Reduce Motion, custom fonts and text size (Settings → Appearance)
-- Updates itself with Sparkle: checks once a day, downloads in the background, and restarts to install once you switch to another app. Both can be turned off in Settings → General, and **RepoRadar → Check for Updates…** checks right away
+- Updates itself with Sparkle: checks every hour, downloads in the background, and restarts to install once you switch to another app. Both can be turned off in Settings → General, and **RepoRadar → Check for Updates…** checks right away
 
 ## Requirements
 

@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import Sparkle
 
-/// Sparkle: checks `SUFeedURL` (appcast.xml on main) once a day, downloads updates in the background
+/// Sparkle: checks `SUFeedURL` (appcast.xml on main) every hour, downloads updates in the background
 /// and installs them, relaunching RepoRadar. Both can be turned off in Settings ▸ General.
 /// Debug builds don't update: they would replace themselves with the release.
 @MainActor @Observable

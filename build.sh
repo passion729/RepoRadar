@@ -60,6 +60,9 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <string>3XEF3cVXZg//0u9drmJpI9eB1ccjgefm0wv9KVAzZyc=</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
+    <!-- Hourly (Sparkle's minimum), not daily: a release reaches installed copies the same hour. -->
+    <key>SUScheduledCheckInterval</key>
+    <integer>3600</integer>
     <key>SUAutomaticallyUpdate</key>
     <true/>
 </dict>

@@ -51,7 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         // `swift run` launches a bare binary; make it a regular foreground app.
         NSApp.setActivationPolicy(.regular)
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
+        // Only the main window: Sparkle closes its alert right before quitting to install an update.
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
+            guard (note.object as? NSWindow)?.identifier?.rawValue == "main" else { return }
             self?.lastWindowClose = Date()
         }
         Task { @MainActor in
@@ -65,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// Closing the window keeps RepoRadar running in the menu bar, like most Mac apps.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// When a window last closed. SwiftUI can still end the app when its only `Window` scene closes,
+    /// When the main window last closed. SwiftUI can still end the app when its only `Window` scene closes,
     /// bypassing the delegate method above, so a termination right after a close is cancelled.
     private var lastWindowClose: Date = .distantPast
 
