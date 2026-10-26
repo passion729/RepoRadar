@@ -277,7 +277,7 @@ private struct RunningRow: View {
     }
 }
 
-/// Default-branch health (N9): pinned repositories, topped up to six with the most recently active ones.
+/// Default-branch health (N9): sidebar repositories, topped up to six with the most recently active ones.
 private struct RepositoryHealth: View {
     @Environment(AppState.self) private var state
 
@@ -333,7 +333,7 @@ private struct RepositoryHealth: View {
 
     private var repos: [String] {
         if let scope = state.scopeRepo { return [scope] }
-        let pinned = state.pinnedRepos
+        let pinned = state.sidebarRepos
         let active = state.runsByRepo
             .filter { !pinned.contains($0.key) }
             .sorted { ($0.value.first?.createdAt ?? .distantPast) > ($1.value.first?.createdAt ?? .distantPast) }

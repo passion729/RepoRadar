@@ -188,6 +188,17 @@ actor GitHubClient {
         return all.filter { !$0.archived && ($0.pushedAt ?? .distantPast) >= cutoff }
     }
 
+    func repo(_ name: String) async throws -> Repo {
+        try await get("/repos/\(name)")
+    }
+
+    /// Repository search; the API allows 30 of these a minute.
+    func searchRepos(_ query: String) async throws -> [Repo] {
+        struct Page: Decodable { let items: [Repo] }
+        let page: Page = try await get("/search/repositories", query: ["q": query, "per_page": "20"])
+        return page.items
+    }
+
     func runs(of repo: String) async throws -> [WorkflowRun] {
         let page: WorkflowRunsPage = try await get("/repos/\(repo)/actions/runs", query: ["per_page": "30"])
         return page.workflowRuns

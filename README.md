@@ -32,7 +32,8 @@ Built with SwiftUI and Liquid Glass for macOS 26, packaged with Swift Package Ma
 
 **Everywhere**
 - Search or jump to anything with ⌘K: `repo:`, `author:`, `reason:` (e.g. `reason:review_requested`), `#123` and free words
-- Filter repositories from the toolbar: scope every page to one repository, pin up to 8 to the sidebar, or leave repositories and whole owners out of every list
+- Add repositories to the sidebar with +: pick from every repository in your account, or search GitHub for any other (`owner/name` works too). Clicking one opens it: Now, Inbox, Pull Requests and Actions filtered to that repository, listed under it
+- Filter repositories from the toolbar: open one repository, add it to the sidebar, or leave repositories and whole owners out of every list
 - Menu bar icon with a colored dot when something needs you, and a panel with the counts, the top of the queue, and running workflows (with "notify me when these finish")
 - System alerts only for what matters (a push of yours failed, a review request, a mention, a deployment waiting), with Re-run, Approve and Open buttons. Pause them for an hour from the toolbar bell
 - Dock badge with the Needs-you count
@@ -71,17 +72,17 @@ open RepoRadar.app
 ./test.sh             # runs the test suite
 ```
 
-`build.sh` signs with the Yuanju Bo team's Apple Development certificate (team `3JNF4FX993`) when it is in your Keychain, so the signature stays stable across rebuilds. Without it (for example in CI) the app is signed ad hoc, which still lets the Keychain and notifications work. Set `SIGN_IDENTITY` to use another certificate, or `SIGN_IDENTITY=-` for ad hoc.
+`build.sh` signs with the Yuanju Bo team's Apple Development certificate (team `3JNF4FX993`) when it is in your Keychain, so the signature stays stable across rebuilds. Without it the app is signed ad hoc, which still lets the Keychain and notifications work. Set `SIGN_IDENTITY` to use another certificate, or `SIGN_IDENTITY=-` for ad hoc.
 
 ## Releasing
 
-Releases are published from a Mac that has the team certificate, not from CI, so every version carries the same signature and the Keychain keeps trusting the app after an update. On an up-to-date, clean `main`:
+Releases are published from a Mac that has the team certificate, so every version carries the same signature and the Keychain keeps trusting the app after an update. On an up-to-date, clean `main`:
 
 ```bash
 ./release.sh 1.1
 ```
 
-It runs the tests, builds and signs the app, packs a DMG, tags the current commit `v1.1` and creates the GitHub release with install notes. Then it signs the DMG with the Sparkle EdDSA key, adds it to `appcast.xml` and pushes that to `main`, where installed copies look for updates. CI only tests and builds pull requests and `main`.
+It runs the tests, builds and signs the app, packs a DMG, tags the current commit `v1.1` and creates the GitHub release with install notes. Then it signs the DMG with the Sparkle EdDSA key, adds it to `appcast.xml` and pushes that to `main`, where installed copies look for updates. There is no CI on GitHub: run `./test.sh` locally before pushing.
 
 The EdDSA private key is `SPARKLE_ED_PRIVATE_KEY` in the Infisical project RepoRadar (prod), so `release.sh` needs `infisical login`; a copy also sits in the login Keychain under the account `RepoRadar`. Its public half is `SUPublicEDKey` in `build.sh`. Without the private key no update can be published. Debug builds never update themselves.
 

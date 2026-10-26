@@ -64,7 +64,11 @@ struct MainView: View {
             page = requested
             state.requestedPage = nil
         }
-        .focusedSceneValue(\.page, $page)
+        // ⌘1–⌘4 go to the pages across all repositories, like the sidebar's top rows.
+        .focusedSceneValue(\.page, Binding(get: { page }, set: {
+            page = $0
+            state.scopeRepo = nil
+        }))
     }
 
     @ViewBuilder private var content: some View {
@@ -218,6 +222,8 @@ struct RefreshButton: View {
 
 // MARK: - Sidebar
 
+/// The four pages across every repository, then the repositories added to the sidebar. Exactly one row is the
+/// open destination: a page, or a repository with the same four pages, filtered to it, nested under it.
 struct Sidebar: View {
     @Environment(AppState.self) private var state
     @Binding var page: Page
@@ -227,10 +233,13 @@ struct Sidebar: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Page.allCases) { item in
-                        NavRow(page: item, isSelected: page == item, badge: badge(for: item)) { page = item }
-                        if item == .pulls && page == .pulls { PullListRows() }
+                        NavRow(page: item, isSelected: state.scopeRepo == nil && page == item, badge: badge(item, in: nil)) {
+                            page = item
+                            state.scopeRepo = nil
+                        }
+                        if item == .pulls && page == .pulls && state.scopeRepo == nil { PullListRows(indent: 38) }
                     }
-                    PinnedRepos()
+                    SidebarRepos(page: $page, badge: badge)
                         .padding(.top, 16)
                 }
                 .padding(.horizontal, 10)
@@ -242,12 +251,12 @@ struct Sidebar: View {
     }
 
     /// Now in blue, failures in red, the rest gray; nothing at 0.
-    private func badge(for page: Page) -> (count: Int, tone: Tone)? {
-        let (count, tone): (Int, Tone) = switch page {
-        case .now: (state.needsYouCount, .blue)
-        case .inbox: (state.scopedUnreadCount, .neutral)
-        case .pulls: (state.scopedPullCount, .neutral)
-        case .actions: (state.scopedFailingCount, .red)
+    private func badge(_ page: Page, in repo: String?) -> (count: Int, tone: Tone)? {
+        let count = state.count(page, in: repo)
+        let tone: Tone = switch page {
+        case .now: .blue
+        case .actions: .red
+        case .inbox, .pulls: .neutral
         }
         return count > 0 ? (count, tone) : nil
     }
@@ -289,85 +298,101 @@ private struct NavRow: View {
     }
 }
 
+/// An indented row under a page or repository: a pull request list, or one of a repository's pages.
+private struct SubRow: View {
+    let title: String
+    let isSelected: Bool
+    let badge: (count: Int, tone: Tone)?
+    let indent: CGFloat
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack {
+                Text(title)
+                    .textStyle(.rowTitle)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(Theme.Ink.primary)
+                Spacer()
+                if let badge { Badge(count: badge.count, tone: badge.tone) }
+            }
+            .padding(.leading, indent)
+            .padding(.trailing, 8)
+            .frame(height: 28)
+            .background(isSelected ? Theme.Fill.subtle : .clear, in: .rect(cornerRadius: Theme.Radius.nav))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(badge.map { "\(title), \($0.count)" } ?? title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 /// Waiting on you / Yours / Mentioned under Pull Requests while it's open (P1).
 private struct PullListRows: View {
     @Environment(AppState.self) private var state
     @SceneStorage("pullList") private var list: PullList = .waiting
+    let indent: CGFloat
 
     var body: some View {
         ForEach(PullList.allCases) { option in
             let count = state.pulls.count { state.inScope($0.repo) && option.matches($0) }
-            Button { list = option } label: {
-                HStack {
-                    Text(option.title)
-                        .textStyle(.rowTitle)
-                        .fontWeight(list == option ? .semibold : .regular)
-                        .foregroundStyle(Theme.Ink.primary)
-                    Spacer()
-                    if count > 0 { Badge(count: count, tone: option == .waiting ? .blue : .neutral) }
-                }
-                .padding(.leading, 38)
-                .padding(.trailing, 8)
-                .frame(height: 28)
-                .background(list == option ? Theme.Fill.subtle : .clear, in: .rect(cornerRadius: Theme.Radius.nav))
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(option.title), \(count)")
-            .accessibilityAddTraits(list == option ? .isSelected : [])
+            SubRow(title: option.title, isSelected: list == option,
+                   badge: count > 0 ? (count, option == .waiting ? .blue : .neutral) : nil, indent: indent) { list = option }
         }
     }
 }
 
-/// Pinned repositories (N2): click to filter every page to one, drag to reorder, right-click to unpin.
-private struct PinnedRepos: View {
+/// Sidebar repositories (N2): click one to open it, drag to reorder, right-click to remove; + adds more.
+private struct SidebarRepos: View {
     @Environment(AppState.self) private var state
+    @Binding var page: Page
+    let badge: (Page, String?) -> (count: Int, tone: Tone)?
+    @State private var isAdding = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text("Pinned repositories").textStyle(.label).foregroundStyle(Theme.Ink.tertiary)
+                Text("Repositories").textStyle(.label).foregroundStyle(Theme.Ink.tertiary)
                 Spacer()
-                Menu {
-                    ForEach(state.repos.filter { !state.pinnedRepos.contains($0) }, id: \.self) { repo in
-                        Button(repo) { state.pin(repo) }
-                    }
-                } label: {
-                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .foregroundStyle(Theme.Ink.tertiary)
-                .disabled(state.pinnedRepos.count >= AppState.maxPins || state.repos.isEmpty)
-                .help(state.pinnedRepos.count >= AppState.maxPins ? "Up to \(AppState.maxPins) repositories can be pinned" : "Pin a repository")
-                .accessibilityLabel("Pin a repository")
+                Button("Add Repository", systemImage: "plus") { isAdding.toggle() }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.Ink.tertiary)
+                    .help("Add a repository")
+                    .popover(isPresented: $isAdding, arrowEdge: .trailing) { AddRepoPopover() }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 4)
 
-            if state.pinnedRepos.isEmpty {
-                Text("Pin up to \(AppState.maxPins) repositories with +. Selecting one filters every page.")
+            if state.sidebarRepos.isEmpty {
+                Text("Add repositories with + to see each one's pull requests, runs and notifications on its own.")
                     .textStyle(.meta)
                     .foregroundStyle(Theme.Ink.tertiary)
                     .padding(.horizontal, 8)
             }
-            ForEach(state.pinnedRepos, id: \.self) { repo in
-                PinnedRow(repo: repo)
+            ForEach(state.sidebarRepos, id: \.self) { repo in
+                RepoRow(repo: repo, isSelected: state.scopeRepo == repo)
+                if state.scopeRepo == repo {
+                    ForEach(Page.allCases) { item in
+                        SubRow(title: item.title, isSelected: page == item, badge: badge(item, repo), indent: 38) { page = item }
+                        if item == .pulls && page == .pulls { PullListRows(indent: 54) }
+                    }
+                }
             }
         }
     }
 }
 
-private struct PinnedRow: View {
+private struct RepoRow: View {
     @Environment(AppState.self) private var state
     let repo: String
+    let isSelected: Bool
     @State private var isHovered = false
 
     var body: some View {
-        let isSelected = state.scopeRepo == repo
-        Button { state.scopeRepo = isSelected ? nil : repo } label: {
+        Button { state.scopeRepo = repo } label: {
             HStack(spacing: 8) {
                 RepoSquare(repo: repo)
                 Text(repo.split(separator: "/").last.map(String.init) ?? repo)
@@ -388,17 +413,100 @@ private struct PinnedRow: View {
         .onHover { isHovered = $0 }
         .help(repo)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityHint(isSelected ? "Shows all repositories again" : "Filters every page to this repository")
+        .accessibilityHint("Opens this repository")
         .draggable(repo)
         .dropDestination(for: String.self) { items, _ in
             guard let moved = items.first else { return false }
-            state.movePin(moved, to: repo)
+            state.moveSidebarRepo(moved, to: repo)
             return true
         }
         .contextMenu {
-            Button("Unpin from Sidebar", systemImage: "pin.slash") { state.unpin(repo) }
+            Button("Remove from Sidebar", systemImage: "minus.circle") { state.removeFromSidebar(repo) }
             Button("Open on GitHub", systemImage: "safari") { state.open([URL(string: "https://github.com/\(repo)")!]) }
         }
+    }
+}
+
+/// Every repository of your account, filtered as you type, plus matching repositories found on GitHub.
+/// Stays open so several can be added in a row.
+private struct AddRepoPopover: View {
+    @Environment(AppState.self) private var state
+    @State private var query = ""
+    @State private var found: [String] = []
+
+    var body: some View {
+        let term = query.trimmingCharacters(in: .whitespaces)
+        let mine = (state.accountRepos ?? []).filter { term.isEmpty || $0.localizedCaseInsensitiveContains(term) }
+        let others = found.filter { !(state.accountRepos ?? []).contains($0) }
+        VStack(alignment: .leading, spacing: 0) {
+            SearchField(prompt: "Search repositories, or owner/name", text: $query, shortcut: nil)
+                .padding(12)
+            Rectangle().fill(Theme.separator).frame(height: 1)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    section("Your repositories", mine)
+                    section("On GitHub", others)
+                    if state.accountRepos == nil {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(10)
+                    } else if mine.isEmpty && others.isEmpty {
+                        Text(term.count < 2 ? "No repositories yet." : "No repositories match “\(term)”.")
+                            .textStyle(.meta)
+                            .foregroundStyle(Theme.Ink.tertiary)
+                            .padding(10)
+                    }
+                }
+                .padding(8)
+            }
+            .frame(height: 420)
+        }
+        .frame(width: 360)
+        .task { await state.loadAccountRepos() }
+        .task(id: term) {
+            found = []
+            guard term.count >= 2 else { return }
+            try? await Task.sleep(for: .milliseconds(400))  // search allows 30 requests a minute
+            guard !Task.isCancelled else { return }
+            found = await state.searchRepos(term)
+        }
+    }
+
+    @ViewBuilder private func section(_ title: String, _ repos: [String]) -> some View {
+        if !repos.isEmpty {
+            Text(title)
+                .textStyle(.label)
+                .foregroundStyle(Theme.Ink.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
+            ForEach(repos, id: \.self) { AddRepoRow(repo: $0) }
+        }
+    }
+}
+
+private struct AddRepoRow: View {
+    @Environment(AppState.self) private var state
+    let repo: String
+    @State private var isHovered = false
+
+    var body: some View {
+        let added = state.sidebarRepos.contains(repo)
+        Button { added ? state.removeFromSidebar(repo) : state.addToSidebar(repo) } label: {
+            HStack(spacing: 8) {
+                RepoSquare(repo: repo)
+                Text(repo).textStyle(.rowTitle).fontWeight(.regular).foregroundStyle(Theme.Ink.primary).lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: added ? "checkmark.circle.fill" : "plus.circle")
+                    .foregroundStyle(added ? Theme.accent : Theme.Ink.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(isHovered ? Theme.Fill.hover : .clear, in: .rect(cornerRadius: 8))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(added ? "Remove from the sidebar" : "Add to the sidebar")
+        .accessibilityAddTraits(added ? .isSelected : [])
     }
 }
 

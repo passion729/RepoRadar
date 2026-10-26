@@ -289,8 +289,8 @@ private struct QueueRow: View {
             Button("Copy Link", systemImage: "link") { state.copyLinks([item.url]) }
             Divider()
             Button("Done", systemImage: "checkmark") { state.done(item); handled() }
-            Button("Pin \(item.repo) to Sidebar", systemImage: "pin") { state.pin(item.repo) }
-                .disabled(state.pinnedRepos.contains(item.repo) || state.pinnedRepos.count >= AppState.maxPins)
+            Button("Add \(item.repo) to Sidebar", systemImage: "sidebar.left") { state.addToSidebar(item.repo) }
+                .disabled(state.sidebarRepos.contains(item.repo))
         }
     }
 

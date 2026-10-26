@@ -4,7 +4,7 @@ import SwiftUI
 
 // MARK: - Filter repositories (G7)
 
-/// Which repositories RepoRadar watches: scope every page to one, pin it to the sidebar,
+/// Which repositories RepoRadar watches: open one, add it to the sidebar,
 /// or leave a repository or a whole owner out of every list and count.
 struct RepoFilterButton: View {
     @Environment(AppState.self) private var state
@@ -130,7 +130,7 @@ private struct RepoFilterRow: View {
 
     var body: some View {
         let excluded = state.excludedRepos.contains(repo)
-        let pinned = state.pinnedRepos.contains(repo)
+        let added = state.sidebarRepos.contains(repo)
         HStack(spacing: 8) {
             Toggle("Watch \(repo)", isOn: Binding(get: { !excluded }, set: { state.setExcluded(repo, !$0) }))
                 .toggleStyle(.checkbox)
@@ -154,15 +154,15 @@ private struct RepoFilterRow: View {
             .buttonStyle(.plain)
             .disabled(excluded)
             .help(excluded ? "Not watched" : "Show only \(repo)")
-            Button(pinned ? "Unpin" : "Pin to Sidebar", systemImage: pinned ? "pin.fill" : "pin") {
-                pinned ? state.unpin(repo) : state.pin(repo)
+            Button(added ? "Remove from Sidebar" : "Add to Sidebar", systemImage: added ? "checkmark.circle.fill" : "plus.circle") {
+                added ? state.removeFromSidebar(repo) : state.addToSidebar(repo)
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
-            .foregroundStyle(pinned ? Theme.accent : Theme.Ink.tertiary)
-            .opacity(pinned || isHovered ? 1 : 0)
-            .disabled(excluded || (!pinned && state.pinnedRepos.count >= AppState.maxPins))
-            .help(pinned ? "Unpin from the sidebar" : "Pin to the sidebar")
+            .foregroundStyle(added ? Theme.accent : Theme.Ink.tertiary)
+            .opacity(added || isHovered ? 1 : 0)
+            .disabled(excluded)
+            .help(added ? "Remove from the sidebar" : "Add to the sidebar")
         }
         .padding(.horizontal, 8)
         .frame(height: 30)

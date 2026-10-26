@@ -112,11 +112,13 @@ final class AppState {
 
     /// Each watched repository's default branch, from the repository list.
     private(set) var defaultBranches: [String: String] = [:]
-    /// Repositories pinned to the sidebar, in the user's order (at most `maxPins`).
-    private(set) var pinnedRepos = UserDefaults.standard.stringArray(forKey: "pinnedRepos") ?? [] {
-        didSet { defaults.set(pinnedRepos, forKey: "pinnedRepos") }
+    /// Repositories added to the sidebar, in the user's order. Ones outside your recently pushed repositories
+    /// are fetched too. (Stored under the old "pinnedRepos" key.)
+    private(set) var sidebarRepos = UserDefaults.standard.stringArray(forKey: "pinnedRepos") ?? [] {
+        didSet { defaults.set(sidebarRepos, forKey: "pinnedRepos") }
     }
-    static let maxPins = 8
+    /// Every non-archived repository of the account, most recently pushed first; loaded by the Add Repository picker.
+    private(set) var accountRepos: [String]?
     /// Repositories and owners (users or organizations) left out of every list and count (G7).
     private(set) var excludedRepos = UserDefaults.standard.stringArray(forKey: "excludedRepos") ?? [] {
         didSet { defaults.set(excludedRepos, forKey: "excludedRepos") }
@@ -128,7 +130,7 @@ final class AppState {
     private(set) var alertsPausedUntil = UserDefaults.standard.object(forKey: "alertsPausedUntil") as? Date {
         didSet { defaults.set(alertsPausedUntil, forKey: "alertsPausedUntil") }
     }
-    /// The pinned repository every page is filtered to, or nil for all.
+    /// The repository whose page is open: every page is filtered to it. Nil shows all repositories.
     var scopeRepo: String?
 
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
@@ -193,13 +195,20 @@ final class AppState {
     }
     /// The queue within the sidebar's repository scope.
     var needsYou: [NeedsYouItem] { allNeedsYou.filter { inScope($0.repo) } }
-    var needsYouCount: Int { needsYou.count }
-    var scopedUnreadCount: Int { notifications.count { $0.unread && inScope($0.repo) } }
-    /// Pull requests waiting on your review plus your own.
-    var scopedPullCount: Int {
-        pulls.count { inScope($0.repo) && ($0.roles.contains(.authored) || ($0.roles.contains(.reviewRequested) && !$0.pr.isDraft)) }
+    var scopedUnreadCount: Int { count(.inbox, in: scopeRepo) }
+    var scopedFailingCount: Int { count(.actions, in: scopeRepo) }
+
+    /// A page's sidebar count in one repository, or all of them: the queue, unread threads, pull requests waiting
+    /// on your review plus your own, failing workflows.
+    func count(_ page: Page, in repo: String?) -> Int {
+        let inRepo = { (name: String) in repo == nil || name == repo }
+        return switch page {
+        case .now: allNeedsYou.count { inRepo($0.repo) }
+        case .inbox: notifications.count { $0.unread && inRepo($0.repo) }
+        case .pulls: pulls.count { inRepo($0.repo) && ($0.roles.contains(.authored) || ($0.roles.contains(.reviewRequested) && !$0.pr.isDraft)) }
+        case .actions: latestRuns.count { inRepo($0.repo) && $0.state == .failure }
+        }
     }
-    var scopedFailingCount: Int { latestRuns.count { inScope($0.repo) && $0.state == .failure } }
 
     /// Runs in progress within scope (not those paused for a deployment review): yours first, then oldest first.
     var runningRuns: [WorkflowRun] {
@@ -266,7 +275,7 @@ final class AppState {
         runsByRepo = runsByRepo.filter { !isExcluded($0.key) }
         allPulls.removeAll { isExcluded($0.repo) }
         inbox.removeAll { isExcluded($0.repo) }
-        pinnedRepos.removeAll(where: isExcluded)
+        sidebarRepos.removeAll(where: isExcluded)
         if let scopeRepo, isExcluded(scopeRepo) { self.scopeRepo = nil }
         publishBadge()
         if reload { Task { await refresh() } }
@@ -279,22 +288,46 @@ final class AppState {
     func pauseAlerts(for duration: TimeInterval) { alertsPausedUntil = Date().addingTimeInterval(duration) }
     func resumeAlerts() { alertsPausedUntil = nil }
 
-    // MARK: Pins
+    // MARK: Sidebar repositories
 
-    func pin(_ repo: String) {
-        guard !pinnedRepos.contains(repo), pinnedRepos.count < Self.maxPins else { return }
-        pinnedRepos.append(repo)
+    /// Adds a repository to the sidebar and, if it isn't watched yet, loads its runs.
+    func addToSidebar(_ repo: String) {
+        guard !sidebarRepos.contains(repo) else { return }
+        sidebarRepos.append(repo)
+        if isExcluded(repo) { setExcluded(repo, false) }
+        guard runsByRepo[repo] == nil else { return }
+        Task {
+            guard let info = try? await client.repo(repo) else { return }
+            defaultBranches[repo] = info.defaultBranch
+            if let runs = try? await client.runs(of: repo), !runs.isEmpty, runsByRepo[repo] == nil { runsByRepo[repo] = runs }
+        }
     }
 
-    func unpin(_ repo: String) {
-        pinnedRepos.removeAll { $0 == repo }
+    func removeFromSidebar(_ repo: String) {
+        sidebarRepos.removeAll { $0 == repo }
         if scopeRepo == repo { scopeRepo = nil }
     }
 
-    /// Moves a pinned repository to where `target` is.
-    func movePin(_ repo: String, to target: String) {
-        guard repo != target, let from = pinnedRepos.firstIndex(of: repo), let to = pinnedRepos.firstIndex(of: target) else { return }
-        pinnedRepos.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+    /// Moves a sidebar repository to where `target` is.
+    func moveSidebarRepo(_ repo: String, to target: String) {
+        guard repo != target, let from = sidebarRepos.firstIndex(of: repo), let to = sidebarRepos.firstIndex(of: target) else { return }
+        sidebarRepos.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+    }
+
+    func loadAccountRepos() async {
+        if let repos = try? await client.repos(pushedSince: .distantPast) { accountRepos = repos.map(\.fullName) }
+    }
+
+    /// Repositories on GitHub matching `query`.
+    func searchRepos(_ query: String) async -> [String] {
+        (try? await client.searchRepos(Self.repoSearchQuery(query)))?.map(\.fullName) ?? []
+    }
+
+    /// "owner/name" searches that owner's repositories by name; anything else is a plain search.
+    nonisolated static func repoSearchQuery(_ query: String) -> String {
+        let parts = query.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2 else { return query }
+        return parts[1].isEmpty ? "user:\(parts[0])" : "\(parts[1]) in:name user:\(parts[0])"
     }
 
     /// A failure or review request that hasn't been viewed yet.
@@ -460,8 +493,13 @@ final class AppState {
     /// Runs per repository, each repository's default branch, and the workflows turned off (`Workflows.key`).
     private func fetchRuns() async throws -> ([String: [WorkflowRun]], [String: String], Set<String>) {
         let days = max(1, defaults.integer(forKey: "lookbackDays"))
-        let repos = try await client.repos(pushedSince: Date().addingTimeInterval(-Double(days) * 86_400))
-            .filter { !isExcluded($0.fullName) }  // excluded repositories cost no requests
+        var repos = try await client.repos(pushedSince: Date().addingTimeInterval(-Double(days) * 86_400))
+        // Sidebar repositories not pushed lately, or not yours (deleted or inaccessible ones are skipped).
+        // ponytail: one request each per refresh (a free 304 when unchanged); batch them if people add dozens.
+        for name in sidebarRepos where !repos.contains(where: { $0.fullName == name }) {
+            if let repo = try? await client.repo(name) { repos.append(repo) }
+        }
+        repos.removeAll { isExcluded($0.fullName) }  // excluded repositories cost no requests
         let branches = Dictionary(repos.compactMap { repo in repo.defaultBranch.map { (repo.fullName, $0) } },
                                   uniquingKeysWith: { first, _ in first })
         var result: [String: [WorkflowRun]] = [:]

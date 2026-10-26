@@ -321,3 +321,9 @@ private func decodeJobs(_ names: [String]) throws -> [WorkflowJob] {
     #expect(GitHubCLI.activeAccount(fromStatusJSON: #"{"hosts":{}}"#) == nil)
     #expect(GitHubCLI.activeAccount(fromStatusJSON: "not json") == nil)
 }
+
+@Test func repoSearchQueryScopesOwnerSlashName() {
+    #expect(AppState.repoSearchQuery("swift-format") == "swift-format")
+    #expect(AppState.repoSearchQuery("apple/swift") == "swift in:name user:apple")
+    #expect(AppState.repoSearchQuery("apple/") == "user:apple")
+}

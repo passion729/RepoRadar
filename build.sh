@@ -67,7 +67,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 EOF
 
 # Sign with the Yuanju Bo team (3JNF4FX993) when its certificate is in the Keychain, so the signature
-# stays the same across rebuilds and the Keychain stops asking. Otherwise (CI) sign ad hoc.
+# stays the same across rebuilds and the Keychain stops asking. Otherwise sign ad hoc.
 # Override with SIGN_IDENTITY="…" ./build.sh, or SIGN_IDENTITY=- for ad hoc.
 IDENTITY="${SIGN_IDENTITY:-Apple Development: Oscar Passion (8HXY99Y2JK)}"
 if [ "$IDENTITY" != "-" ] && ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$IDENTITY\""; then

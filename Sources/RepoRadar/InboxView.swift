@@ -322,8 +322,8 @@ private struct NotificationRow: View {
             Divider()
             NotificationActions(items: [thread])
             Button("Mute Thread", systemImage: "bell.slash") { state.mute([thread]) }
-            Button("Pin \(thread.repo) to Sidebar", systemImage: "pin") { state.pin(thread.repo) }
-                .disabled(state.pinnedRepos.contains(thread.repo) || state.pinnedRepos.count >= AppState.maxPins)
+            Button("Add \(thread.repo) to Sidebar", systemImage: "sidebar.left") { state.addToSidebar(thread.repo) }
+                .disabled(state.sidebarRepos.contains(thread.repo))
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(thread.unread ? "Unread, " : "")\(thread.title), \(tag.text), \(meta)")

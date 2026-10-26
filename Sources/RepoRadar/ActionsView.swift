@@ -238,8 +238,8 @@ private struct WorkflowRow: View {
             LinkActions(urls: [workflow.primaryRun.htmlUrl])
             Divider()
             RunActions(runs: [workflow.primaryRun])
-            Button("Pin \(workflow.repo) to Sidebar", systemImage: "pin") { state.pin(workflow.repo) }
-                .disabled(state.pinnedRepos.contains(workflow.repo) || state.pinnedRepos.count >= AppState.maxPins)
+            Button("Add \(workflow.repo) to Sidebar", systemImage: "sidebar.left") { state.addToSidebar(workflow.repo) }
+                .disabled(state.sidebarRepos.contains(workflow.repo))
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(workflow.name), \(workflow.repo), \(workflow.primaryRun.state.label)")

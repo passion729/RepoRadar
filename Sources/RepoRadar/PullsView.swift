@@ -245,8 +245,8 @@ private struct PullRow: View {
         .onHover { isHovered = $0 }
         .contextMenu {
             LinkActions(urls: [pull.pr.htmlUrl])
-            Button("Pin \(pull.repo) to Sidebar", systemImage: "pin") { state.pin(pull.repo) }
-                .disabled(state.pinnedRepos.contains(pull.repo) || state.pinnedRepos.count >= AppState.maxPins)
+            Button("Add \(pull.repo) to Sidebar", systemImage: "sidebar.left") { state.addToSidebar(pull.repo) }
+                .disabled(state.sidebarRepos.contains(pull.repo))
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
