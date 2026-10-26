@@ -47,30 +47,28 @@ final class MenuBarController: NSObject {
         if statusItem.isVisible != visible { statusItem.isVisible = visible }
     }
 
-    /// M1: the radar, plus a red dot and the failure count while workflows fail, a blue dot when only reviews
+    /// M1: the radar, tinted red with the count of unseen failing workflows, blue when only reviews
     /// wait, a pause mark while alerts are paused; dimmed when offline or signed out.
     private func updateButton() {
         withObservationTracking {
             guard let button = statusItem.button else { return }
-            let failing = state.scopedFailingCount
+            let failing = state.failingCount  // unseen only: a failure stops counting once you've viewed it
             let reviews = state.needsYou.count { $0.category == .review }
-            let image = NSImage(systemSymbolName: "dot.radiowaves.left.and.right", accessibilityDescription: "RepoRadar")
-            image?.isTemplate = true
+            var image = NSImage(systemSymbolName: "dot.radiowaves.left.and.right", accessibilityDescription: "RepoRadar")
+            let tint = failing > 0 ? NSColor(Tone.red.solid) : reviews > 0 ? NSColor.systemBlue : nil  // brand blue is too dark as thin strokes on a dark menu bar
+            if let tint { image = image?.withSymbolConfiguration(.init(paletteColors: [tint])) }
+            image?.isTemplate = tint == nil
             button.image = image
             button.imagePosition = .imageLeading
 
             let title = NSMutableAttributedString()
-            let font = NSFont.menuBarFont(ofSize: 0)
             if failing > 0 {
-                title.append(NSAttributedString(string: " ●", attributes: [.foregroundColor: NSColor(Tone.red.solid), .font: font]))
-                title.append(NSAttributedString(string: " \(failing)", attributes: [.font: font]))
-            } else if reviews > 0 {
-                title.append(NSAttributedString(string: " ●", attributes: [.foregroundColor: NSColor(Tone.blue.solid), .font: font]))
+                title.append(NSAttributedString(string: "\u{2009}\(failing)", attributes: [.font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor]))
             }
             if state.alertsPaused {
                 let pause = NSTextAttachment()
                 pause.image = NSImage(systemSymbolName: "bell.slash.fill", accessibilityDescription: "Alerts paused")
-                title.append(NSAttributedString(string: " "))
+                title.append(NSAttributedString(string: "\u{2009}"))
                 title.append(NSAttributedString(attachment: pause))
             }
             button.attributedTitle = title

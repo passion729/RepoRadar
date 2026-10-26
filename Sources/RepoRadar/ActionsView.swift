@@ -41,6 +41,9 @@ struct ActionsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .autoRead(selection, when: selected.map { state.needsAttention($0.latest) } ?? false) {
+            state.markSeen(selected.map { [$0.latest.seenKey, $0.primaryRun.seenKey] } ?? [])
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Segmented(selection: $filter, segments: RunFilter.allCases.map { option in
