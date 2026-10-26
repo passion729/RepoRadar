@@ -86,6 +86,10 @@ It runs the tests, builds and signs the app, packs a DMG, tags the current commi
 
 The EdDSA private key is `SPARKLE_ED_PRIVATE_KEY` in the Infisical project RepoRadar (prod), so `release.sh` needs `infisical login`; a copy also sits in the login Keychain under the account `RepoRadar`. Its public half is `SUPublicEDKey` in `build.sh`. Without the private key no update can be published. Debug builds never update themselves.
 
+## Website
+
+The landing page lives in `site/` (Next.js, static export): `cd site && pnpm install && pnpm build` writes `site/out/`, which any static host can serve. `/` is English and `/zh/` Chinese, with all copy in `lib/content.ts`. It reads the latest version and DMG from `appcast.xml`, so rebuild it after each release. `npx wrangler deploy` (from `site/`) publishes it to Cloudflare at reporadar.passion7.cc.
+
 ## Signing in
 
 Open **Settings (⌘,) → Account** and pick one:

@@ -1,0 +1,13 @@
+// Cloudflare (Workers static assets): uploads the static export in out/.
+// Workers Builds deploys it on pushes to main that touch site/ or appcast.xml (root directory site/).
+// By hand: pnpm build && npx wrangler deploy
+{
+  "name": "reporadar",
+  "compatibility_date": "2026-10-26",
+  "workers_dev": false,
+  "routes": [{ "pattern": "reporadar.passion7.cc", "custom_domain": true }],
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  }
+}
