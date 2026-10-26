@@ -202,7 +202,7 @@ struct GeneralSettings: View {
                 Text("Updates")
             } footer: {
                 Text(updates.isAvailable
-                     ? "RepoRadar checks once a day. Updates download in the background and install the next time it quits."
+                     ? "RepoRadar checks once a day. Updates download in the background, then RepoRadar restarts to install them once you switch to another app."
                      : "Updates are off in debug builds.")
             }
             .disabled(!updates.isAvailable)
