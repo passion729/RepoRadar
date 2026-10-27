@@ -3,6 +3,15 @@
     <channel>
         <title>RepoRadar</title>
         <item>
+            <title>2.2.5</title>
+            <pubDate>Tue, 27 Oct 2026 15:49:20 +0800</pubDate>
+            <sparkle:version>47</sparkle:version>
+            <sparkle:shortVersionString>2.2.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/passion729/RepoRadar/releases/download/v2.2.5/RepoRadar-v2.2.5.dmg" length="5323202" type="application/octet-stream" sparkle:edSignature="YkMMNCrnfhkaEaNCJK3bVgYYi5oA3v4tI0LEyo+oXj6PiH/bkj6DIoO60UddEcCam1qQIpAIyG0+SC3YQWk3DQ=="/>
+        </item>
+        <item>
             <title>2.2.4</title>
             <pubDate>Tue, 27 Oct 2026 15:38:19 +0800</pubDate>
             <sparkle:version>45</sparkle:version>
@@ -19,15 +28,6 @@
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/passion729/RepoRadar/releases/download/v2.2.3/RepoRadar-v2.2.3.dmg" length="5322852" type="application/octet-stream" sparkle:edSignature="J7NKpKCD9IeItuReiGSkCnZpUxMJD4xB3xHgLcQMuEzIigeTrxztlRHDEC/8YXodqWLvoYfREjMO9x2CCXmOBg=="/>
-        </item>
-        <item>
-            <title>2.2.2</title>
-            <pubDate>Tue, 27 Oct 2026 00:40:57 +0800</pubDate>
-            <sparkle:version>40</sparkle:version>
-            <sparkle:shortVersionString>2.2.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/passion729/RepoRadar/releases/download/v2.2.2/RepoRadar-v2.2.2.dmg" length="5322842" type="application/octet-stream" sparkle:edSignature="i/cNqNQzYwGh6VxJjPiPC9keb9blj/STakofVIPNFo79Awafu6iAKKAV6yRsuXQqT3LmQjv4Pzq8KfyrDMpCAQ=="/>
         </item>
     </channel>
 </rss>
