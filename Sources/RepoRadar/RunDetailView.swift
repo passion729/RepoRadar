@@ -262,6 +262,9 @@ struct JobLogPanel: View {
                 } else if let ended = job.completedAt, ended < .now.addingTimeInterval(-90 * 86_400) {
                     // GitHub answers an expired log with a bare "Server Error".
                     message = "This log has expired. GitHub keeps logs for 90 days unless the repository sets otherwise."
+                } else if let reason = annotations.first(where: { $0.annotationLevel == "failure" }) {
+                    // A job that never started (billing, a bad workflow) has no log blob, only this annotation.
+                    message = reason.message
                 } else {
                     message = (error as? GitHubError)?.message ?? error.localizedDescription
                 }
