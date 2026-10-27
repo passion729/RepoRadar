@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The menu bar item (M1–M5): an NSStatusItem with a colored dot, opening a SwiftUI panel in a popover.
-/// (Not MenuBarExtra: its label is drawn as a template, which can't carry the red or blue dot.)
+/// The menu bar item (M1–M5): an NSStatusItem with a tinted radar, opening a SwiftUI panel in a popover.
+/// (Not MenuBarExtra: its label is drawn as a template, which can't carry the red or blue tint.)
 @MainActor
 final class MenuBarController: NSObject {
     static var shared: MenuBarController?
@@ -48,7 +48,7 @@ final class MenuBarController: NSObject {
     }
 
     /// M1: the radar, tinted red with the count of unseen failing workflows, blue when only reviews
-    /// wait, a pause mark while alerts are paused; dimmed when offline or signed out.
+    /// wait; dimmed when offline or signed out. Paused alerts show in the panel, not here.
     private func updateButton() {
         withObservationTracking {
             guard let button = statusItem.button else { return }
@@ -61,17 +61,9 @@ final class MenuBarController: NSObject {
             button.image = image
             button.imagePosition = .imageLeading
 
-            let title = NSMutableAttributedString()
-            if failing > 0 {
-                title.append(NSAttributedString(string: "\u{2009}\(failing)", attributes: [.font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor]))
-            }
-            if state.alertsPaused {
-                let pause = NSTextAttachment()
-                pause.image = NSImage(systemSymbolName: "bell.slash.fill", accessibilityDescription: "Alerts paused")
-                title.append(NSAttributedString(string: "\u{2009}"))
-                title.append(NSAttributedString(attachment: pause))
-            }
-            button.attributedTitle = title
+            button.attributedTitle = failing > 0
+                ? NSAttributedString(string: "\u{2009}\(failing)", attributes: [.font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor])
+                : NSAttributedString()
             let status = state.syncStatus
             button.appearsDisabled = status == .offline || status == .signInAgain
             var label = "RepoRadar"

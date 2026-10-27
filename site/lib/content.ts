@@ -53,7 +53,7 @@ const en = {
   menu: {
     eyebrow: "Menu bar",
     title: "Urgent things, from the menu bar.",
-    body: "A red dot when your push breaks. Re-run it from there.",
+    body: "The icon turns red when your push breaks. Re-run it from there.",
   },
   keys: {
     eyebrow: "Keyboard first",
@@ -148,7 +148,7 @@ const zh: Content = {
   menu: {
     eyebrow: "菜单栏",
     title: "急事，菜单栏就能处理。",
-    body: "推送一挂就亮红点，点开就能重跑。",
+    body: "推送一挂图标就变红，点开就能重跑。",
   },
   keys: {
     eyebrow: "全键盘操作",

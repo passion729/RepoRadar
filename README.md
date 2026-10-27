@@ -34,7 +34,7 @@ Built with SwiftUI and Liquid Glass for macOS 26, packaged with Swift Package Ma
 - Search or jump to anything with ⌘K: `repo:`, `author:`, `reason:` (e.g. `reason:review_requested`), `#123` and free words
 - Add repositories to the sidebar with +: pick from every repository in your account, or search GitHub for any other (`owner/name` works too). Clicking one opens it: Now, Inbox, Pull Requests and Actions filtered to that repository, listed under it
 - Filter repositories from the toolbar: open one repository, add it to the sidebar, or leave repositories and whole owners out of every list
-- Menu bar icon with a colored dot when something needs you, and a panel with the counts, the top of the queue, and running workflows (with "notify me when these finish")
+- Menu bar icon that turns red when a workflow fails (blue when reviews wait), and a panel with the counts, the top of the queue, and running workflows (with "notify me when these finish")
 - System alerts only for what matters (a push of yours failed, a review request, a mention, a deployment waiting), with Re-run, Approve and Open buttons. Pause them for an hour from the toolbar bell
 - Dock badge with the Needs-you count
 - Polls with ETags and honors `X-Poll-Interval` and rate limits; the sidebar shows sync state and API quota
